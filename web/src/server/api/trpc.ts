@@ -431,12 +431,10 @@ const enforceTraceAccess = t.middleware(async (opts) => {
     traceId,
     projectId,
     timestamp: timestamp ?? undefined,
-    fromTimestamp: fromTimestamp ?? undefined,
     renderingProps: {
       truncated: verbosity === "truncated",
       shouldJsonParse: false, // we do not want to parse the input/output for tRPC
     },
-    clickhouseFeatureTag: "tracing-trpc",
   });
 
   if (!clickhouseTrace) {

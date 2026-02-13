@@ -120,7 +120,7 @@ export const queueItemRouter = createTRPCRouter({
 
       if (item.objectType === AnnotationQueueObjectType.OBSERVATION) {
         const clickhouseObservation = await getObservationById({
-          id: item.objectId,
+          observationId: item.objectId,
           projectId: input.projectId,
         });
 
@@ -130,7 +130,7 @@ export const queueItemRouter = createTRPCRouter({
 
         return {
           ...inflatedItem,
-          parentTraceId: clickhouseObservation?.traceId,
+          parentTraceId: clickhouseObservation?.traceId ?? null,
         };
       }
 

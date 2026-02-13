@@ -32,7 +32,7 @@ export const getObservationsCountFromEventsTable = async (_opts: any) => 0;
 
 export const getObservationsWithModelDataFromEventsTable = async (
   _opts: any,
-) => ({ observations: [] });
+) => [];
 
 export const getObservationByIdFromEventsTable = async (_opts: any) =>
   undefined;
@@ -167,7 +167,21 @@ export const getUsersFromEventsTable = async (_opts: any) => [];
 export const getUsersCountFromEventsTable = async (_opts: any) => [
   { totalCount: 0 },
 ];
-export const getUserMetricsFromEventsTable = async (_opts: any) => [];
+export const getUserMetricsFromEventsTable = async (
+  _projectId: string,
+  _userIds: string[],
+  _filter: any,
+) =>
+  [] as Array<{
+    minTimestamp: Date;
+    maxTimestamp: Date;
+    traceCount: number;
+    inputUsage: number;
+    outputUsage: number;
+    totalUsage: number;
+    observationCount: number;
+    totalCost: number;
+  }>;
 export const hasAnyUserFromEventsTable = async (_projectId: string) => false;
 
 export const getEventsForBlobStorageExport = function (

@@ -325,7 +325,12 @@ export const SessionPage: React.FC<{
     if (!session.isSuccess) return;
     const nextList = session.data.traces.map((t) => ({
       id: t.id,
-      params: { timestamp: t.timestamp.toISOString() },
+      params: {
+        timestamp:
+          typeof t.timestamp === "string"
+            ? t.timestamp
+            : t.timestamp.toISOString(),
+      },
     }));
     if (areDetailPageListsEqual(detailPagelists.traces, nextList)) return;
     setDetailPageList("traces", nextList);

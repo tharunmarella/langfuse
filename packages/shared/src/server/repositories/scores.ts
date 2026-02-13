@@ -231,10 +231,25 @@ export const getCategoricalScoresGroupedByName = async (
     _count: { id: true },
     orderBy: { _count: { id: "desc" } },
   });
-  return result.map((r) => ({
-    name: r.name,
-    string_value: r.stringValue,
-    count: r._count.id,
+
+  // Group by name (label) and collect string values
+  const grouped = result.reduce(
+    (acc, r) => {
+      const name = r.name;
+      if (!acc[name]) {
+        acc[name] = [];
+      }
+      if (r.stringValue) {
+        acc[name].push(r.stringValue);
+      }
+      return acc;
+    },
+    {} as Record<string, string[]>,
+  );
+
+  return Object.entries(grouped).map(([label, values]) => ({
+    label,
+    values,
   }));
 };
 
@@ -297,12 +312,15 @@ export const getScoreStringValues = async (
   _limit?: number,
   _offset?: number,
 ) => {
-  const result = await prisma.pgScore.findMany({
+  const result = await prisma.pgScore.groupBy({
+    by: ["stringValue"],
     where: { projectId, name: scoreName, stringValue: { not: null } },
-    distinct: ["stringValue"],
-    select: { stringValue: true },
+    _count: { id: true },
   });
-  return result.map((r) => ({ value: r.stringValue ?? "" }));
+  return result.map((r) => ({
+    value: r.stringValue ?? "",
+    count: r._count.id,
+  }));
 };
 
 export const deleteScores = async (projectId: string, scoreIds: string[]) => {
