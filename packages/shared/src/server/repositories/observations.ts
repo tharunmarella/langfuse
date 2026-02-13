@@ -178,7 +178,8 @@ export const getObservationForTraceIdByName = async ({
     orderBy: { startTime: "desc" },
   });
   if (!obs) return null;
-  return convertToRecord(obs) as ObservationRecordReadType;
+  const record = convertToRecord(obs) as ObservationRecordReadType;
+  return convertToDomain(record) as any;
 };
 
 export const getObservationById = async ({
@@ -510,7 +511,8 @@ export const getObservationsForBlobStorageExport = function (
 
 export const getGenerationsForAnalyticsIntegrations = async function* (
   projectId: string,
-  _opts: any,
+  _minTimestamp?: any,
+  _maxTimestamp?: any,
 ) {
   const observations = await prisma.pgObservation.findMany({
     where: { projectId, type: "GENERATION" },

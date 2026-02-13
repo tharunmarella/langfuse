@@ -69,7 +69,7 @@ export async function getTracesTable(opts: {
   projectId: string;
   filter: FilterState;
   searchQuery?: string;
-  searchType?: TracingSearchType;
+  searchType?: TracingSearchType | TracingSearchType[];
   orderBy?: OrderByState;
   limit: number;
   page: number;

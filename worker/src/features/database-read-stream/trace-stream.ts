@@ -74,7 +74,7 @@ export const getTraceStream = async (props: {
   });
 
   const emptyScoreColumns = distinctScoreNames.reduce(
-    (acc, name) => ({ ...acc, [name]: null }),
+    (acc, item) => ({ ...acc, [item.name]: null }),
     {} as Record<string, null>,
   );
 

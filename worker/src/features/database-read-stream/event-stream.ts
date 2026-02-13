@@ -96,7 +96,7 @@ export const getEventsStream = async (props: {
   });
 
   const emptyScoreColumns = distinctScoreNames.reduce(
-    (acc, name) => ({ ...acc, [name]: null }),
+    (acc, item) => ({ ...acc, [item.name]: null }),
     {} as Record<string, null>,
   );
 

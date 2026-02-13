@@ -286,7 +286,7 @@ export const getDatabaseReadStreamPaginated = async ({
           });
 
           emptyScoreColumns = distinctScoreNames.reduce(
-            (acc, name) => ({ ...acc, [name]: null }),
+            (acc, item) => ({ ...acc, [item.name]: null }),
             {} as Record<string, null>,
           );
 
@@ -332,7 +332,7 @@ export const getDatabaseReadStreamPaginated = async ({
 
           // Add comments to flattened chunk
           const flattenedChunk = getChunkWithFlattenedScores(
-            chunk,
+            chunk as any,
             emptyScoreColumns,
           );
 
@@ -360,7 +360,7 @@ export const getDatabaseReadStreamPaginated = async ({
             clickhouseConfigs,
           });
           emptyScoreColumns = distinctScoreNames.reduce(
-            (acc, name) => ({ ...acc, [name]: null }),
+            (acc, item) => ({ ...acc, [item.name]: null }),
             {} as Record<string, null>,
           );
 
@@ -497,9 +497,9 @@ export const getDatabaseReadStreamPaginated = async ({
             },
           });
 
-          return items.map((item) => {
+          return items.map((item: any) => {
             const datasetName = datasets.find(
-              (d) => d.id === item.datasetId,
+              (d) => d.id === item.datasetRunId,
             )?.name;
 
             return {

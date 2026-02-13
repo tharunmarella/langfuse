@@ -293,7 +293,7 @@ export const getObservationStream = async (props: {
   // Helper function to process a single observation row
   const modelCache = createModelCache(projectId);
   const emptyScoreColumns = distinctScoreNames.reduce(
-    (acc, name) => ({ ...acc, [name]: null }),
+    (acc, item) => ({ ...acc, [item.name]: null }),
     {} as Record<string, null>,
   );
 

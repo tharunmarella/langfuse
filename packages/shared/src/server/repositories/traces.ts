@@ -374,12 +374,13 @@ export const getTracesForBlobStorageExport = function (
 };
 
 export const getTracesForAnalyticsIntegrations = async function* (
-  _projectId: string,
-  _opts: any,
+  projectId: string,
+  _minTimestamp?: any,
+  _maxTimestamp?: any,
 ) {
   // Simplified implementation for analytics integrations
   const traces = await prisma.pgTrace.findMany({
-    where: { projectId: _projectId },
+    where: { projectId },
     orderBy: { timestamp: "asc" },
     take: 1000,
   });

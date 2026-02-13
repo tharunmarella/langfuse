@@ -412,7 +412,7 @@ export const getDistinctScoreNames = async (p: {
   projectId: string;
   cutoffCreatedAt?: Date;
   filter?: any;
-  isTimestampFilter?: boolean;
+  isTimestampFilter?: boolean | ((filter: any) => boolean);
   clickhouseConfigs?: any;
 }) => {
   const result = await prisma.pgScore.findMany({
@@ -445,7 +445,8 @@ export const getScoresForBlobStorageExport = function (
 
 export const getScoresForAnalyticsIntegrations = async function* (
   projectId: string,
-  _opts: any,
+  _minTimestamp?: any,
+  _maxTimestamp?: any,
 ) {
   const scores = await prisma.pgScore.findMany({
     where: { projectId },

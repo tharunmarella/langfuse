@@ -263,8 +263,6 @@ export const createEvalJobs = async ({
             : "timestamp" in event
               ? new Date(event.timestamp)
               : new Date(jobTimestamp),
-        clickhouseFeatureTag: "eval-create",
-        excludeInputOutput: true,
       });
 
       recordIncrement("langfuse.evaluation-execution.trace_cache_fetch", 1, {
@@ -554,10 +552,10 @@ export const createEvalJobs = async ({
       const observationExists = await checkObservationExists(
         event.projectId,
         observationId,
-        // Fallback to jobTimestamp if no payload timestamp is set to allow for successful retry attempts.
+        undefined, // traceId
         "timestamp" in event
           ? new Date(event.timestamp)
-          : new Date(jobTimestamp),
+          : new Date(jobTimestamp), // startTime
       );
       if (!observationExists) {
         logger.warn(
@@ -1095,7 +1093,6 @@ export async function extractVariablesFromTracingData({
           traceId,
           projectId,
           timestamp: traceTimestamp,
-          clickhouseFeatureTag: "eval-execution",
         });
         traceCache.set(traceCacheKey, trace ?? null);
       }
@@ -1150,15 +1147,14 @@ export async function extractVariablesFromTracingData({
       const observationCacheKey = `${projectId}:${traceId}:${mapping.objectName}`;
       let observation = observationCache.get(observationCacheKey);
       if (!observationCache.has(observationCacheKey)) {
-        const observations = await getObservationForTraceIdByName({
+        const observationResult = await getObservationForTraceIdByName({
           traceId,
           projectId,
           name: mapping.objectName,
-          timestamp: traceTimestamp,
-          fetchWithInputOutput: true,
+          traceTimestamp,
         });
-        observation = observations.shift() || null; // We only take the first match and ignore duplicate generation-names in a trace.
-        observationCache.set(observationCacheKey, observation);
+        observation = (observationResult as any) || null; // getObservationForTraceIdByName returns single observation or null
+        observationCache.set(observationCacheKey, observation as any);
       }
 
       // user facing errors
@@ -1174,7 +1170,7 @@ export async function extractVariablesFromTracingData({
 
       results.push({
         var: variable,
-        value: parseDatabaseRowToString(observation, mapping),
+        value: parseDatabaseRowToString(observation as any, mapping),
         environment: observation.environment,
       });
       continue;

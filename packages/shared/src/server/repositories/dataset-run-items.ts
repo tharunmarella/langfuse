@@ -54,11 +54,11 @@ export const getDatasetRunItemsWithoutIOByItemIds = async (
   _opts?: any,
 ) => [];
 
-export const getDatasetItemIdsByTraceIdCh = async (
-  _projectId: string,
-  _traceId: string,
-  _opts?: any,
-) => [];
+export const getDatasetItemIdsByTraceIdCh = async (opts: {
+  projectId: string;
+  traceId: string;
+  filter?: any;
+}) => [];
 
 export const getDatasetRunItemsCountCh = async (_opts: any) => 0;
 
