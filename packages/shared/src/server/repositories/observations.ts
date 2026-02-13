@@ -490,6 +490,7 @@ export const getTraceIdsForObservations = async (
   return result.map((r) => ({
     id: r.id,
     trace_id: r.traceId,
+    traceId: r.traceId, // Add camelCase for compatibility
   }));
 };
 

@@ -268,7 +268,13 @@ export const getTracesIdentifierForSession = async (
 ) => {
   const traces = await prisma.pgTrace.findMany({
     where: { projectId, sessionId },
-    select: { id: true, name: true, userId: true, timestamp: true },
+    select: {
+      id: true,
+      name: true,
+      userId: true,
+      timestamp: true,
+      environment: true,
+    },
     orderBy: { timestamp: "asc" },
   });
   return traces.map((t) => ({
@@ -276,6 +282,7 @@ export const getTracesIdentifierForSession = async (
     name: t.name ?? "",
     user_id: t.userId ?? "",
     timestamp: t.timestamp.toISOString().replace("T", " ").replace("Z", ""),
+    environment: t.environment,
   }));
 };
 
@@ -435,6 +442,10 @@ export const getTraceCountsByProjectAndDay = async ({
 
 export const getTraceIdentifiers = async (_opts: any) => {
   return [];
+};
+
+export const extractFromAndToTimestampsFromFilter = (filter: any) => {
+  return { from: undefined, to: undefined };
 };
 
 function safeJsonParse(value: string): any {

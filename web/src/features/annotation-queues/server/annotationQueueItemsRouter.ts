@@ -130,7 +130,7 @@ export const queueItemRouter = createTRPCRouter({
 
         return {
           ...inflatedItem,
-          parentTraceId: clickhouseObservation?.traceId ?? null,
+          parentTraceId: (clickhouseObservation as any)?.traceId ?? null,
         };
       }
 
