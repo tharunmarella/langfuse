@@ -32,7 +32,7 @@ export const getObservationsCountFromEventsTable = async (_opts: any) => 0;
 
 export const getObservationsWithModelDataFromEventsTable = async (
   _opts: any,
-) => [];
+): Promise<any[]> => [];
 
 export const getObservationByIdFromEventsTable = async (_opts: any) =>
   undefined;
