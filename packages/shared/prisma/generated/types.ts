@@ -18,7 +18,7 @@ export const Role = {
   NONE: "NONE",
 } as const;
 export type Role = (typeof Role)[keyof typeof Role];
-export const LegacyPrismaObservationType = {
+export const PgObservationType = {
   SPAN: "SPAN",
   EVENT: "EVENT",
   GENERATION: "GENERATION",
@@ -30,23 +30,22 @@ export const LegacyPrismaObservationType = {
   EMBEDDING: "EMBEDDING",
   GUARDRAIL: "GUARDRAIL",
 } as const;
-export type LegacyPrismaObservationType =
-  (typeof LegacyPrismaObservationType)[keyof typeof LegacyPrismaObservationType];
-export const LegacyPrismaObservationLevel = {
+export type PgObservationType =
+  (typeof PgObservationType)[keyof typeof PgObservationType];
+export const PgObservationLevel = {
   DEBUG: "DEBUG",
   DEFAULT: "DEFAULT",
   WARNING: "WARNING",
   ERROR: "ERROR",
 } as const;
-export type LegacyPrismaObservationLevel =
-  (typeof LegacyPrismaObservationLevel)[keyof typeof LegacyPrismaObservationLevel];
-export const LegacyPrismaScoreSource = {
+export type PgObservationLevel =
+  (typeof PgObservationLevel)[keyof typeof PgObservationLevel];
+export const PgScoreSource = {
   ANNOTATION: "ANNOTATION",
   API: "API",
   EVAL: "EVAL",
 } as const;
-export type LegacyPrismaScoreSource =
-  (typeof LegacyPrismaScoreSource)[keyof typeof LegacyPrismaScoreSource];
+export type PgScoreSource = (typeof PgScoreSource)[keyof typeof PgScoreSource];
 export const ScoreConfigDataType = {
   CATEGORICAL: "CATEGORICAL",
   NUMERIC: "NUMERIC",
@@ -546,77 +545,6 @@ export type JobExecution = {
   job_output_score_id: string | null;
   execution_trace_id: string | null;
 };
-export type LegacyPrismaObservation = {
-  id: string;
-  trace_id: string | null;
-  project_id: string;
-  type: LegacyPrismaObservationType;
-  start_time: Generated<Timestamp>;
-  end_time: Timestamp | null;
-  name: string | null;
-  metadata: unknown | null;
-  parent_observation_id: string | null;
-  level: Generated<LegacyPrismaObservationLevel>;
-  status_message: string | null;
-  version: string | null;
-  created_at: Generated<Timestamp>;
-  updated_at: Generated<Timestamp>;
-  model: string | null;
-  internal_model: string | null;
-  internal_model_id: string | null;
-  modelParameters: unknown | null;
-  input: unknown | null;
-  output: unknown | null;
-  prompt_tokens: Generated<number>;
-  completion_tokens: Generated<number>;
-  total_tokens: Generated<number>;
-  unit: string | null;
-  input_cost: string | null;
-  output_cost: string | null;
-  total_cost: string | null;
-  calculated_input_cost: string | null;
-  calculated_output_cost: string | null;
-  calculated_total_cost: string | null;
-  completion_start_time: Timestamp | null;
-  prompt_id: string | null;
-};
-export type LegacyPrismaScore = {
-  id: string;
-  timestamp: Generated<Timestamp>;
-  project_id: string;
-  name: string;
-  value: number | null;
-  source: LegacyPrismaScoreSource;
-  author_user_id: string | null;
-  comment: string | null;
-  trace_id: string;
-  observation_id: string | null;
-  config_id: string | null;
-  string_value: string | null;
-  queue_id: string | null;
-  created_at: Generated<Timestamp>;
-  updated_at: Generated<Timestamp>;
-  data_type: Generated<ScoreConfigDataType>;
-};
-export type LegacyPrismaTrace = {
-  id: string;
-  external_id: string | null;
-  timestamp: Generated<Timestamp>;
-  name: string | null;
-  user_id: string | null;
-  metadata: unknown | null;
-  release: string | null;
-  version: string | null;
-  project_id: string;
-  public: Generated<boolean>;
-  bookmarked: Generated<boolean>;
-  tags: Generated<string[]>;
-  input: unknown | null;
-  output: unknown | null;
-  session_id: string | null;
-  created_at: Generated<Timestamp>;
-  updated_at: Generated<Timestamp>;
-};
 export type LlmApiKeys = {
   id: string;
   created_at: Generated<Timestamp>;
@@ -747,6 +675,87 @@ export type PendingDeletion = {
   object: string;
   object_id: string;
   is_deleted: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type PgObservation = {
+  id: string;
+  trace_id: string | null;
+  project_id: string;
+  type: PgObservationType;
+  start_time: Generated<Timestamp>;
+  end_time: Timestamp | null;
+  name: string | null;
+  metadata: unknown | null;
+  parent_observation_id: string | null;
+  level: Generated<PgObservationLevel>;
+  status_message: string | null;
+  version: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+  model: string | null;
+  internal_model: string | null;
+  internal_model_id: string | null;
+  modelParameters: unknown | null;
+  input: unknown | null;
+  output: unknown | null;
+  prompt_tokens: Generated<number>;
+  completion_tokens: Generated<number>;
+  total_tokens: Generated<number>;
+  unit: string | null;
+  input_cost: string | null;
+  output_cost: string | null;
+  total_cost: string | null;
+  calculated_input_cost: string | null;
+  calculated_output_cost: string | null;
+  calculated_total_cost: string | null;
+  completion_start_time: Timestamp | null;
+  prompt_id: string | null;
+  environment: Generated<string>;
+  prompt_name: string | null;
+  prompt_version: number | null;
+  usage_details: unknown | null;
+  cost_details: unknown | null;
+  provided_usage_details: unknown | null;
+  provided_cost_details: unknown | null;
+};
+export type PgScore = {
+  id: string;
+  timestamp: Generated<Timestamp>;
+  project_id: string;
+  name: string;
+  value: number | null;
+  source: PgScoreSource;
+  author_user_id: string | null;
+  comment: string | null;
+  trace_id: string;
+  observation_id: string | null;
+  config_id: string | null;
+  string_value: string | null;
+  queue_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+  data_type: Generated<ScoreConfigDataType>;
+  environment: Generated<string>;
+  metadata: unknown | null;
+};
+export type PgTrace = {
+  id: string;
+  external_id: string | null;
+  timestamp: Generated<Timestamp>;
+  name: string | null;
+  user_id: string | null;
+  metadata: unknown | null;
+  release: string | null;
+  version: string | null;
+  project_id: string;
+  public: Generated<boolean>;
+  bookmarked: Generated<boolean>;
+  tags: Generated<string[]>;
+  input: unknown | null;
+  output: unknown | null;
+  session_id: string | null;
+  environment: Generated<string>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -975,7 +984,7 @@ export type DB = {
   models: Model;
   notification_preferences: NotificationPreference;
   observation_media: ObservationMedia;
-  observations: LegacyPrismaObservation;
+  observations: PgObservation;
   organization_memberships: OrganizationMembership;
   organizations: Organization;
   pending_deletions: PendingDeletion;
@@ -988,7 +997,7 @@ export type DB = {
   prompt_protected_labels: PromptProtectedLabels;
   prompts: Prompt;
   score_configs: ScoreConfig;
-  scores: LegacyPrismaScore;
+  scores: PgScore;
   Session: Session;
   slack_integrations: SlackIntegration;
   sso_configs: SsoConfig;
@@ -996,7 +1005,7 @@ export type DB = {
   table_view_presets: TableViewPreset;
   trace_media: TraceMedia;
   trace_sessions: TraceSession;
-  traces: LegacyPrismaTrace;
+  traces: PgTrace;
   triggers: Trigger;
   users: User;
   verification_tokens: VerificationToken;

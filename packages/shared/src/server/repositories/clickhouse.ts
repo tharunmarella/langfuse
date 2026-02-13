@@ -1,26 +1,20 @@
-import { env } from "../../env";
-import {
-  clickhouseClient,
-  convertDateToClickhouseDateTime,
-  PreferredClickhouseService,
-} from "../clickhouse/client";
+/**
+ * PostgreSQL-only mode: This module redirects all ClickHouse operations
+ * to PostgreSQL. The original ClickHouse implementation has been replaced.
+ *
+ * All repository files import from this module, so redirecting here
+ * provides a single point of change for the entire codebase.
+ */
+
+import { prisma } from "../../db";
 import { logger } from "../logger";
-import { getTracer, instrumentAsync } from "../instrumentation";
-import { randomUUID } from "crypto";
-import { getClickhouseEntityType } from "../clickhouse/schemaUtils";
-import { NodeClickHouseClientConfigOptions } from "@clickhouse/client/dist/config";
-import { context, SpanKind, trace } from "@opentelemetry/api";
-import { backOff } from "exponential-backoff";
-import {
-  StorageService,
-  StorageServiceFactory,
-} from "../services/StorageService";
-import { ClickHouseSettings } from "@clickhouse/client";
+import { instrumentAsync } from "../instrumentation";
+import { SpanKind } from "@opentelemetry/api";
+import { env } from "../../env";
 
 /**
- * Custom error class for ClickHouse resource-related errors
+ * Custom error class for resource-related errors (kept for API compatibility)
  */
-// Error type configuration map
 const ERROR_TYPE_CONFIG: Record<
   "MEMORY_LIMIT" | "OVERCOMMIT" | "TIMEOUT",
   {
@@ -34,7 +28,7 @@ const ERROR_TYPE_CONFIG: Record<
     discriminators: ["OvercommitTracker"],
   },
   TIMEOUT: {
-    discriminators: ["Timeout", "timeout", "timed out"],
+    discriminators: ["Timeout", "timeout", "timed out", "statement timeout"],
   },
 };
 
@@ -52,7 +46,6 @@ export class ClickHouseResourceError extends Error {
     super(originalError.message, { cause: originalError });
     this.name = "ClickHouseResourceError";
     this.errorType = errType;
-    // Preserve the original stack trace if available
     if (originalError.stack) {
       this.stack = originalError.stack;
     }
@@ -80,24 +73,143 @@ export class ClickHouseResourceError extends Error {
   }
 }
 
-let s3StorageServiceClient: StorageService;
+/**
+ * Execute a query against PostgreSQL. This replaces the ClickHouse queryClickhouse function.
+ *
+ * IMPORTANT: The SQL passed here should be PostgreSQL-compatible SQL.
+ * Repository files need to be updated to use PostgreSQL syntax.
+ *
+ * For backward compatibility during migration, this function accepts the same
+ * options shape as the original queryClickhouse.
+ */
+export async function queryClickhouse<T>(opts: {
+  query: string;
+  params?: Record<string, unknown> | undefined;
+  clickhouseConfigs?: any;
+  tags?: Record<string, string>;
+  preferredClickhouseService?: any;
+  clickhouseSettings?: any;
+}): Promise<T[]> {
+  return await instrumentAsync(
+    { name: "postgres-query", spanKind: SpanKind.CLIENT },
+    async (span) => {
+      span.setAttribute("db.system", "postgresql");
+      span.setAttribute("db.query.text", opts.query);
+      span.setAttribute("db.operation.name", "SELECT");
 
-const getS3StorageServiceClient = (bucketName: string): StorageService => {
-  if (!s3StorageServiceClient) {
-    s3StorageServiceClient = StorageServiceFactory.getInstance({
-      bucketName,
-      accessKeyId: env.LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID,
-      secretAccessKey: env.LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY,
-      endpoint: env.LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT,
-      region: env.LANGFUSE_S3_EVENT_UPLOAD_REGION,
-      forcePathStyle: env.LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE === "true",
-      awsSse: env.LANGFUSE_S3_EVENT_UPLOAD_SSE,
-      awsSseKmsKeyId: env.LANGFUSE_S3_EVENT_UPLOAD_SSE_KMS_KEY_ID,
+      if (env.NODE_ENV === "development") {
+        logger.info(`postgres:query ${opts.query}`);
+      }
+
+      // Convert ClickHouse-style named parameters {paramName: Type} to PostgreSQL $N parameters
+      const { query: pgQuery, paramValues } = convertClickhouseParamsToPostgres(
+        opts.query,
+        opts.params,
+      );
+
+      try {
+        const result = await prisma.$queryRawUnsafe<T[]>(
+          pgQuery,
+          ...paramValues,
+        );
+        return result;
+      } catch (error) {
+        throw ClickHouseResourceError.wrapIfResourceError(error as Error);
+      }
+    },
+  );
+}
+
+/**
+ * Stream query results from PostgreSQL.
+ * Uses cursor-based pagination since Prisma doesn't support true streaming.
+ */
+export async function* queryClickhouseStream<T>(opts: {
+  query: string;
+  params?: Record<string, unknown> | undefined;
+  clickhouseConfigs?: any;
+  tags?: Record<string, string>;
+  preferredClickhouseService?: any;
+  clickhouseSettings?: any;
+}): AsyncGenerator<T> {
+  const PAGE_SIZE = 1000;
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const paginatedQuery = `${opts.query} LIMIT ${PAGE_SIZE} OFFSET ${offset}`;
+    const results = await queryClickhouse<T>({
+      ...opts,
+      query: paginatedQuery,
     });
-  }
-  return s3StorageServiceClient;
-};
 
+    for (const row of results) {
+      yield row;
+    }
+
+    if (results.length < PAGE_SIZE) {
+      hasMore = false;
+    }
+    offset += PAGE_SIZE;
+  }
+}
+
+/**
+ * Execute a command against PostgreSQL.
+ * For DDL or DML operations.
+ */
+export async function commandClickhouse(opts: {
+  query: string;
+  params?: Record<string, unknown> | undefined;
+  clickhouseConfigs?: any;
+  tags?: Record<string, string>;
+  clickhouseSettings?: any;
+  abortSignal?: AbortSignal;
+}): Promise<void> {
+  return await instrumentAsync(
+    { name: "postgres-command", spanKind: SpanKind.CLIENT },
+    async (span) => {
+      span.setAttribute("db.system", "postgresql");
+      span.setAttribute("db.query.text", opts.query);
+      span.setAttribute("db.operation.name", "COMMAND");
+
+      if (env.NODE_ENV === "development") {
+        logger.info(`postgres:command ${opts.query}`);
+      }
+
+      const { query: pgQuery, paramValues } = convertClickhouseParamsToPostgres(
+        opts.query,
+        opts.params,
+      );
+
+      try {
+        await prisma.$executeRawUnsafe(pgQuery, ...paramValues);
+      } catch (error) {
+        // Some ClickHouse-specific commands will fail on PostgreSQL (e.g., system queries)
+        // We log and swallow those errors
+        const errMsg = (error as Error).message || "";
+        if (
+          errMsg.includes("system.parts") ||
+          errMsg.includes("TRUNCATE TABLE") ||
+          errMsg.includes("ALTER TABLE") ||
+          errMsg.includes("OPTIMIZE TABLE")
+        ) {
+          logger.debug(
+            `Ignoring ClickHouse-specific command in PostgreSQL mode: ${opts.query}`,
+          );
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+}
+
+/**
+ * Upsert records into PostgreSQL.
+ * Replaces the ClickHouse upsert that wrote to ClickHouse + S3.
+ * In PostgreSQL-only mode, we just do a standard upsert.
+ */
 export async function upsertClickhouse<
   T extends Record<string, unknown>,
 >(opts: {
@@ -107,95 +219,23 @@ export async function upsertClickhouse<
   tags?: Record<string, string>;
 }): Promise<void> {
   return await instrumentAsync(
-    { name: "clickhouse-upsert", spanKind: SpanKind.CLIENT },
+    { name: "postgres-upsert", spanKind: SpanKind.CLIENT },
     async (span) => {
-      // https://opentelemetry.io/docs/specs/semconv/database/database-spans/
-      span.setAttribute("ch.query.table", opts.table);
-      span.setAttribute("db.system", "clickhouse");
+      span.setAttribute("db.system", "postgresql");
       span.setAttribute("db.operation.name", "UPSERT");
 
-      await Promise.all(
-        opts.records.map(async (record) => {
-          // drop trailing s and pretend it's always a create.
-          // Only applicable to scores and traces.
-          let eventType = `${opts.table.slice(0, -1)}-create`;
-          if (opts.table === "observations") {
-            // @ts-ignore - If it's an observation we now that `type` is a string
-            eventType = `${record["type"].toLowerCase()}-create`;
-          }
-
-          const eventId = randomUUID();
-          const bucketPath = `${env.LANGFUSE_S3_EVENT_UPLOAD_PREFIX}${record.project_id}/${getClickhouseEntityType(eventType)}/${record.id}/${eventId}.json`;
-
-          if (env.LANGFUSE_ENABLE_BLOB_STORAGE_FILE_LOG === "true") {
-            // Write new file directly to ClickHouse. We don't use the ClickHouse writer here as we expect more limited traffic
-            // and are not worried that much about latency.
-            await clickhouseClient().insert({
-              table: "blob_storage_file_log",
-              values: [
-                {
-                  id: randomUUID(),
-                  project_id: record.project_id,
-                  entity_type: getClickhouseEntityType(eventType),
-                  entity_id: record.id,
-                  event_id: eventId,
-                  bucket_name: env.LANGFUSE_S3_EVENT_UPLOAD_BUCKET,
-                  bucket_path: bucketPath,
-                  event_ts: convertDateToClickhouseDateTime(new Date()),
-                  is_deleted: 0,
-                },
-              ],
-              format: "JSONEachRow",
-              clickhouse_settings: {
-                log_comment: JSON.stringify(opts.tags ?? {}),
-              },
-            });
-          }
-
-          return getS3StorageServiceClient(
-            env.LANGFUSE_S3_EVENT_UPLOAD_BUCKET,
-          ).uploadJson(bucketPath, [
-            {
-              id: eventId,
-              timestamp: new Date().toISOString(),
-              type: eventType,
-              body: opts.eventBodyMapper(record),
-            },
-          ]);
-        }),
-      );
-
-      const res = await clickhouseClient().insert({
-        table: opts.table,
-        values: opts.records.map((record) => ({
-          ...record,
-          event_ts: convertDateToClickhouseDateTime(new Date()),
-        })),
-        format: "JSONEachRow",
-        clickhouse_settings: {
-          log_comment: JSON.stringify(opts.tags ?? {}),
-        },
-      });
-      // same logic as for prisma. we want to see queries in development
-      if (env.NODE_ENV === "development") {
-        logger.info(`clickhouse:insert ${res.query_id} ${opts.table}`);
+      // traces_null is a ClickHouse-specific concept, skip it
+      if (opts.table === "traces_null") {
+        return;
       }
 
-      span.setAttribute("ch.queryId", res.query_id);
-
-      // add summary headers to the span. Helps to tune performance
-      const summaryHeader = res.response_headers["x-clickhouse-summary"];
-      if (summaryHeader) {
+      for (const record of opts.records) {
+        const body = opts.eventBodyMapper(record);
         try {
-          const summary = Array.isArray(summaryHeader)
-            ? JSON.parse(summaryHeader[0])
-            : JSON.parse(summaryHeader);
-          for (const key in summary) {
-            span.setAttribute(`ch.${key}`, summary[key]);
-          }
+          await upsertRecordToPostgres(opts.table, body);
         } catch (error) {
-          logger.debug(
-            `Failed to parse clickhouse summary header ${summaryHeader}`,
+          logger.error(
+            `Failed to upsert record to PostgreSQL table ${opts.table}`,
             error,
           );
         }
@@ -204,303 +244,193 @@ export async function upsertClickhouse<
   );
 }
 
-export async function* queryClickhouseStream<T>(opts: {
-  query: string;
-  params?: Record<string, unknown> | undefined;
-  clickhouseConfigs?: NodeClickHouseClientConfigOptions;
-  tags?: Record<string, string>;
-  preferredClickhouseService?: PreferredClickhouseService;
-  clickhouseSettings?: ClickHouseSettings;
-}): AsyncGenerator<T> {
-  const tracer = getTracer("clickhouse-query-stream");
-  const span = tracer.startSpan("clickhouse-query-stream", {
-    kind: SpanKind.CLIENT,
-  });
+async function upsertRecordToPostgres(
+  table: "scores" | "traces" | "observations",
+  body: Record<string, unknown>,
+): Promise<void> {
+  if (table === "traces") {
+    await prisma.pgTrace.upsert({
+      where: { id: body.id as string },
+      create: {
+        id: body.id as string,
+        name: body.name as string | null,
+        userId: body.user_id as string | null,
+        metadata: body.metadata as any,
+        release: body.release as string | null,
+        version: body.version as string | null,
+        projectId: body.project_id as string,
+        public: (body.public as boolean) ?? false,
+        bookmarked: (body.bookmarked as boolean) ?? false,
+        tags: (body.tags as string[]) ?? [],
+        input: body.input ? safeJsonParse(body.input as string) : null,
+        output: body.output ? safeJsonParse(body.output as string) : null,
+        sessionId: body.session_id as string | null,
+        environment: (body.environment as string) ?? "default",
+        timestamp: body.timestamp
+          ? new Date(body.timestamp as number)
+          : new Date(),
+      },
+      update: {
+        name: body.name as string | null,
+        userId: body.user_id as string | null,
+        metadata: body.metadata as any,
+        release: body.release as string | null,
+        version: body.version as string | null,
+        public: body.public as boolean,
+        bookmarked: body.bookmarked as boolean,
+        tags: (body.tags as string[]) ?? [],
+        input: body.input ? safeJsonParse(body.input as string) : null,
+        output: body.output ? safeJsonParse(body.output as string) : null,
+        sessionId: body.session_id as string | null,
+        environment: (body.environment as string) ?? "default",
+      },
+    });
+  } else if (table === "observations") {
+    await prisma.pgObservation.upsert({
+      where: { id: body.id as string },
+      create: {
+        id: body.id as string,
+        traceId: body.trace_id as string | null,
+        projectId: body.project_id as string,
+        type: (body.type as any) ?? "SPAN",
+        startTime: body.start_time
+          ? new Date(body.start_time as number)
+          : new Date(),
+        endTime: body.end_time ? new Date(body.end_time as number) : null,
+        name: body.name as string | null,
+        metadata: body.metadata as any,
+        parentObservationId: body.parent_observation_id as string | null,
+        level: (body.level as any) ?? "DEFAULT",
+        statusMessage: body.status_message as string | null,
+        version: body.version as string | null,
+        model: body.provided_model_name as string | null,
+        internalModelId: body.internal_model_id as string | null,
+        modelParameters: body.model_parameters
+          ? safeJsonParse(body.model_parameters as string)
+          : null,
+        input: body.input ? safeJsonParse(body.input as string) : null,
+        output: body.output ? safeJsonParse(body.output as string) : null,
+        completionStartTime: body.completion_start_time
+          ? new Date(body.completion_start_time as number)
+          : null,
+        promptId: body.prompt_id as string | null,
+        environment: (body.environment as string) ?? "default",
+        promptName: body.prompt_name as string | null,
+        promptVersion: body.prompt_version as number | null,
+        usageDetails: body.usage_details as any,
+        costDetails: body.cost_details as any,
+        providedUsageDetails: body.provided_usage_details as any,
+        providedCostDetails: body.provided_cost_details as any,
+      },
+      update: {
+        traceId: body.trace_id as string | null,
+        name: body.name as string | null,
+        metadata: body.metadata as any,
+        level: body.level as any,
+        statusMessage: body.status_message as string | null,
+        version: body.version as string | null,
+        model: body.provided_model_name as string | null,
+        internalModelId: body.internal_model_id as string | null,
+        input: body.input ? safeJsonParse(body.input as string) : null,
+        output: body.output ? safeJsonParse(body.output as string) : null,
+        environment: (body.environment as string) ?? "default",
+        usageDetails: body.usage_details as any,
+        costDetails: body.cost_details as any,
+        providedUsageDetails: body.provided_usage_details as any,
+        providedCostDetails: body.provided_cost_details as any,
+      },
+    });
+  } else if (table === "scores") {
+    await prisma.pgScore.upsert({
+      where: {
+        id_projectId: {
+          id: body.id as string,
+          projectId: body.project_id as string,
+        },
+      },
+      create: {
+        id: body.id as string,
+        projectId: body.project_id as string,
+        traceId: body.trace_id as string,
+        observationId: body.observation_id as string | null,
+        name: body.name as string,
+        value: body.value as number | null,
+        source: body.source as any,
+        comment: body.comment as string | null,
+        authorUserId: body.author_user_id as string | null,
+        configId: body.config_id as string | null,
+        dataType: body.data_type as any,
+        stringValue: body.string_value as string | null,
+        queueId: body.queue_id as string | null,
+        environment: (body.environment as string) ?? "default",
+        metadata: body.metadata as any,
+        timestamp: body.timestamp
+          ? new Date(body.timestamp as number)
+          : new Date(),
+      },
+      update: {
+        name: body.name as string,
+        value: body.value as number | null,
+        source: body.source as any,
+        comment: body.comment as string | null,
+        authorUserId: body.author_user_id as string | null,
+        dataType: body.data_type as any,
+        stringValue: body.string_value as string | null,
+        environment: (body.environment as string) ?? "default",
+        metadata: body.metadata as any,
+      },
+    });
+  }
+}
 
+function safeJsonParse(value: string): any {
   try {
-    const res = await context
-      .with(trace.setSpan(context.active(), span), async () => {
-        // https://opentelemetry.io/docs/specs/semconv/database/database-spans/
-        span.setAttribute("ch.query.text", opts.query);
-        span.setAttribute("db.system", "clickhouse");
-        span.setAttribute("db.query.text", opts.query);
-        span.setAttribute("db.operation.name", "SELECT");
-
-        const res = await clickhouseClient(
-          opts.clickhouseConfigs,
-          opts.preferredClickhouseService,
-        ).query({
-          query: opts.query,
-          format: "JSONEachRow",
-          query_params: opts.params,
-          clickhouse_settings: {
-            ...opts.clickhouseSettings,
-            log_comment: JSON.stringify(opts.tags ?? {}),
-          },
-        });
-
-        // same logic as for prisma. we want to see queries in development
-        if (env.NODE_ENV === "development") {
-          logger.info(`clickhouse:query ${res.query_id} ${opts.query}`);
-        }
-
-        span.setAttribute("ch.queryId", res.query_id);
-
-        // add summary headers to the span. Helps to tune performance
-        const summaryHeader = res.response_headers["x-clickhouse-summary"];
-        if (summaryHeader) {
-          try {
-            const summary = Array.isArray(summaryHeader)
-              ? JSON.parse(summaryHeader[0])
-              : JSON.parse(summaryHeader);
-            for (const key in summary) {
-              span.setAttribute(`ch.${key}`, summary[key]);
-            }
-          } catch (error) {
-            logger.debug(
-              `Failed to parse clickhouse summary header ${summaryHeader}`,
-              error,
-            );
-          }
-        }
-        return res;
-      })
-      .catch((error) => {
-        // Transform resource errors to provide actionable advice
-        throw ClickHouseResourceError.wrapIfResourceError(error as Error);
-      });
-
-    for await (const rows of res.stream<T>()) {
-      for (const row of rows) {
-        yield handleExceptionRow(row.json());
-      }
-    }
-  } catch (error) {
-    // Also catch errors during streaming
-    throw ClickHouseResourceError.wrapIfResourceError(error as Error);
-  } finally {
-    span.end();
+    return JSON.parse(value);
+  } catch {
+    return value;
   }
 }
 
 /**
- * ClickHouse has a quirk when it comes to handling exceptions mid response.
- * It will simply output a row with "exception" key inside, which is indistinguishable from
- * a query like `SELECT "my lovely string" AS exception;` may return.
+ * Convert ClickHouse-style named parameters to PostgreSQL $N parameters.
  *
- * E.g.:
- * ```
- * {"exception":"Code: 395. DB::Exception: memory limit exceeded: would use l0.23 GiB"}
- * ```
+ * ClickHouse uses: {paramName: Type} e.g. {projectId: String}
+ * PostgreSQL uses: $1, $2, etc.
  *
- * This function makes the best effort to convert such rows into errors and throws them.
- *
- * See:
- * - https://github.com/ClickHouse/clickhouse-js/issues/332
- * - https://github.com/ClickHouse/ClickHouse/issues/75175
- *
- * Ideally this should get fixed in the future versions of ClickHouse.
+ * This function extracts parameter names, maps them to $N placeholders,
+ * and returns the ordered parameter values.
  */
-function handleExceptionRow<T>(parsedRow: T): T {
-  if (
-    typeof parsedRow === "object" &&
-    parsedRow !== null &&
-    Object.keys(parsedRow).length === 1 &&
-    "exception" in parsedRow
-  ) {
-    const potentialException = (parsedRow as { exception: string }).exception;
-    if (potentialException.match(/^Code: (\d+)/)) {
-      logger.error(
-        `[clickhouse] Exception row detected: ${potentialException}`,
-        parsedRow,
-      );
-      throw new Error(potentialException);
-    }
+function convertClickhouseParamsToPostgres(
+  query: string,
+  params?: Record<string, unknown>,
+): { query: string; paramValues: unknown[] } {
+  if (!params) {
+    return { query, paramValues: [] };
   }
-  return parsedRow;
-}
 
-/**
- * Determines if an error is retryable (socket hang up, connection reset, broken pipe, etc.)
- */
-function isRetryableError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
+  const paramValues: unknown[] = [];
+  let paramIndex = 0;
 
-  const errorMessage = (error as Error).message?.toLowerCase() || "";
-
-  // Check for socket hang up and other network-related errors
-  const retryablePatterns = [
-    "socket hang up",
-    "broken pipe",
-    "connection reset",
-    "econnreset",
-    "network_error",
-    "etimedout",
-    "econnrefused",
-  ];
-
-  return retryablePatterns.some((pattern) => errorMessage.includes(pattern));
-}
-
-export async function queryClickhouse<T>(opts: {
-  query: string;
-  params?: Record<string, unknown> | undefined;
-  clickhouseConfigs?: NodeClickHouseClientConfigOptions;
-  tags?: Record<string, string>;
-  preferredClickhouseService?: PreferredClickhouseService;
-  clickhouseSettings?: ClickHouseSettings;
-}): Promise<T[]> {
-  return await instrumentAsync(
-    { name: "clickhouse-query", spanKind: SpanKind.CLIENT },
-    async (span) => {
-      // https://opentelemetry.io/docs/specs/semconv/database/database-spans/
-      span.setAttribute("ch.query.text", opts.query);
-      span.setAttribute("db.system", "clickhouse");
-      span.setAttribute("db.query.text", opts.query);
-      span.setAttribute("db.operation.name", "SELECT");
-
-      // Retry logic for socket hang up and other network errors
-      return await backOff(
-        async () => {
-          // same logic as for prisma. we want to see queries in development
-          if (env.NODE_ENV === "development") {
-            logger.info(`clickhouse:query ${opts.query}`);
-          }
-          const res = await clickhouseClient(
-            opts.clickhouseConfigs,
-            opts.preferredClickhouseService,
-          ).query({
-            query: opts.query,
-            format: "JSONEachRow",
-            query_params: opts.params,
-            clickhouse_settings: {
-              asterisk_include_alias_columns: 1,
-              asterisk_include_materialized_columns: 1,
-              ...opts.clickhouseSettings,
-              log_comment: JSON.stringify(opts.tags ?? {}),
-            },
-          });
-
-          span.setAttribute("ch.queryId", res.query_id);
-
-          // add summary headers to the span. Helps to tune performance
-          const summaryHeader = res.response_headers["x-clickhouse-summary"];
-          if (summaryHeader) {
-            try {
-              const summary = Array.isArray(summaryHeader)
-                ? JSON.parse(summaryHeader[0])
-                : JSON.parse(summaryHeader);
-              for (const key in summary) {
-                span.setAttribute(`ch.${key}`, summary[key]);
-              }
-            } catch (error) {
-              logger.debug(
-                `Failed to parse clickhouse summary header ${summaryHeader}`,
-                error,
-              );
-            }
-          }
-
-          return (await res.json<T>()).map(handleExceptionRow);
-        },
-        {
-          numOfAttempts: env.LANGFUSE_CLICKHOUSE_QUERY_MAX_ATTEMPTS,
-          retry: (error: Error, attemptNumber: number) => {
-            const shouldRetry = isRetryableError(error);
-            if (shouldRetry) {
-              logger.warn(
-                `ClickHouse query failed with retryable error (attempt ${attemptNumber}/${env.LANGFUSE_CLICKHOUSE_QUERY_MAX_ATTEMPTS}): ${error.message}`,
-                {
-                  error: error.message,
-                  attemptNumber,
-                  tags: opts.tags,
-                },
-              );
-              span.addEvent("clickhouse-query-retry", {
-                "retry.attempt": attemptNumber,
-                "retry.error": error.message,
-              });
-            } else {
-              logger.error(
-                `ClickHouse query failed with non-retryable error: ${error.message}`,
-                {
-                  error: error.message,
-                  tags: opts.tags,
-                },
-              );
-            }
-            return shouldRetry;
-          },
-          startingDelay: 100,
-          timeMultiple: 1,
-          maxDelay: 100,
-        },
-      ).catch((error) => {
-        // Transform resource errors to provide actionable advice
-        throw ClickHouseResourceError.wrapIfResourceError(error as Error);
-      });
+  // Match ClickHouse parameter syntax: {paramName: Type}
+  const pgQuery = query.replace(
+    /\{(\w+):\s*\w+(?:\(\d+\))?\}/g,
+    (_match, paramName) => {
+      paramIndex++;
+      const value = params[paramName];
+      paramValues.push(value);
+      return `$${paramIndex}`;
     },
   );
-}
 
-export async function commandClickhouse(opts: {
-  query: string;
-  params?: Record<string, unknown> | undefined;
-  clickhouseConfigs?: NodeClickHouseClientConfigOptions;
-  tags?: Record<string, string>;
-  clickhouseSettings?: ClickHouseSettings;
-  abortSignal?: AbortSignal;
-}): Promise<void> {
-  return await instrumentAsync(
-    { name: "clickhouse-command", spanKind: SpanKind.CLIENT },
-    async (span) => {
-      // https://opentelemetry.io/docs/specs/semconv/database/database-spans/
-      span.setAttribute("ch.query.text", opts.query);
-      span.setAttribute("db.system", "clickhouse");
-      span.setAttribute("db.query.text", opts.query);
-      span.setAttribute("db.operation.name", "COMMAND");
-
-      const res = await clickhouseClient(opts.clickhouseConfigs).command({
-        query: opts.query,
-        query_params: opts.params,
-        ...(opts.tags?.queryId
-          ? { query_id: opts.tags.queryId as string }
-          : {}),
-        ...(opts.abortSignal ? { abort_signal: opts.abortSignal } : {}),
-        clickhouse_settings: {
-          ...opts.clickhouseSettings,
-          log_comment: JSON.stringify(opts.tags ?? {}),
-        },
-      });
-      // same logic as for prisma. we want to see queries in development
-      if (env.NODE_ENV === "development") {
-        logger.info(`clickhouse:query ${res.query_id} ${opts.query}`);
-      }
-
-      span.setAttribute("ch.queryId", res.query_id);
-
-      // add summary headers to the span. Helps to tune performance
-      const summaryHeader = res.response_headers["x-clickhouse-summary"];
-      if (summaryHeader) {
-        try {
-          const summary = Array.isArray(summaryHeader)
-            ? JSON.parse(summaryHeader[0])
-            : JSON.parse(summaryHeader);
-          for (const key in summary) {
-            span.setAttribute(`ch.${key}`, summary[key]);
-          }
-        } catch (error) {
-          logger.debug(
-            `Failed to parse clickhouse summary header ${summaryHeader}`,
-            error,
-          );
-        }
-      }
-    },
-  );
+  return { query: pgQuery, paramValues };
 }
 
 export function parseClickhouseUTCDateTimeFormat(dateStr: string): Date {
+  // Handle both ClickHouse format ('2024-05-23 18:33:41.602000')
+  // and ISO format ('2024-05-23T18:33:41.602Z')
+  if (dateStr.includes("T")) {
+    return new Date(dateStr);
+  }
   return new Date(`${dateStr.replace(" ", "T")}Z`);
 }
 

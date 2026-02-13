@@ -1,68 +1,38 @@
-import { ScoreDataTypeType, ScoreDomain, ScoreSourceType } from "../../domain";
-import { PreferredClickhouseService } from "../clickhouse/client";
-import { queryClickhouse } from "./clickhouse";
-import { ScoreRecordReadType } from "./definitions";
-import { convertClickhouseScoreToDomain } from "./scores_converters";
-
 /**
- * @internal
- * Internal utility function for getting scores by ID.
- * Do not use directly - use ScoresApiService or repository functions instead.
+ * Scores utils - PostgreSQL-only implementation.
  */
+
+import { ScoreDataTypeType, ScoreDomain, ScoreSourceType } from "../../domain";
+import { prisma } from "../../db";
+import { convertPrismaScoreToRecord } from "./postgres";
+import { convertClickhouseScoreToDomain } from "./scores_converters";
+import { ScoreRecordReadType } from "./definitions";
+
 export const _handleGetScoreById = async ({
   projectId,
   scoreId,
   source,
   scoreScope,
   scoreDataTypes,
-  preferredClickhouseService,
 }: {
   projectId: string;
   scoreId: string;
   source?: ScoreSourceType;
   scoreScope: "traces_only" | "all";
   scoreDataTypes?: readonly ScoreDataTypeType[];
-  preferredClickhouseService?: PreferredClickhouseService;
+  preferredClickhouseService?: any;
 }): Promise<ScoreDomain | undefined> => {
-  const query = `
-  SELECT *
-  FROM scores s
-  WHERE s.project_id = {projectId: String}
-  AND s.id = {scoreId: String}
-  ${scoreDataTypes ? `AND s.data_type IN ({scoreDataTypes: Array(String)})` : ""}
-  ${source ? `AND s.source = {source: String}` : ""}
-  ${scoreScope === "traces_only" ? "AND s.session_id IS NULL AND s.dataset_run_id IS NULL" : ""}
-  ORDER BY s.event_ts DESC
-  LIMIT 1 BY s.id, s.project_id
-  LIMIT 1
-`;
+  const where: any = { projectId, id: scoreId };
+  if (source) where.source = source;
+  if (scoreDataTypes) where.dataType = { in: scoreDataTypes };
 
-  const rows = await queryClickhouse<ScoreRecordReadType>({
-    query,
-    params: {
-      projectId,
-      scoreId,
-      ...(source !== undefined ? { source } : {}),
-      ...(scoreDataTypes
-        ? { scoreDataTypes: scoreDataTypes.map((d) => d.toString()) }
-        : {}),
-    },
-    tags: {
-      feature: "tracing",
-      type: "score",
-      kind: "byId",
-      projectId,
-    },
-    preferredClickhouseService,
-  });
-  return rows.map((row) => convertClickhouseScoreToDomain(row)).shift();
+  const score = await prisma.pgScore.findFirst({ where });
+  if (!score) return undefined;
+
+  const record = convertPrismaScoreToRecord(score) as ScoreRecordReadType;
+  return convertClickhouseScoreToDomain(record);
 };
 
-/**
- * @internal
- * Internal utility function for getting scores by ID.
- * Do not use directly - use ScoresApiService or repository functions instead.
- */
 export const _handleGetScoresByIds = async ({
   projectId,
   scoreId,
@@ -76,32 +46,12 @@ export const _handleGetScoresByIds = async ({
   scoreScope: "traces_only" | "all";
   dataTypes?: readonly ScoreDataTypeType[];
 }): Promise<ScoreDomain[]> => {
-  const query = `
-  SELECT *
-  FROM scores s
-  WHERE s.project_id = {projectId: String}
-  AND s.id IN ({scoreId: Array(String)})
-  ${source ? `AND s.source = {source: String}` : ""}
-  ${scoreScope === "traces_only" ? "AND s.session_id IS NULL AND s.dataset_run_id IS NULL" : ""}
-  ${dataTypes ? `AND s.data_type IN ({dataTypes: Array(String)})` : ""}
-  ORDER BY s.event_ts DESC
-  LIMIT 1 BY s.id, s.project_id
-`;
+  const where: any = { projectId, id: { in: scoreId } };
+  if (source) where.source = source;
+  if (dataTypes) where.dataType = { in: dataTypes };
 
-  const rows = await queryClickhouse<ScoreRecordReadType>({
-    query,
-    params: {
-      projectId,
-      scoreId,
-      ...(dataTypes ? { dataTypes: dataTypes.map((d) => d.toString()) } : {}),
-      ...(source !== undefined ? { source } : {}),
-    },
-    tags: {
-      feature: "tracing",
-      type: "score",
-      kind: "byId",
-      projectId,
-    },
-  });
-  return rows.map((row) => convertClickhouseScoreToDomain(row));
+  const scores = await prisma.pgScore.findMany({ where });
+  return scores
+    .map(convertPrismaScoreToRecord)
+    .map((r) => convertClickhouseScoreToDomain(r as ScoreRecordReadType));
 };

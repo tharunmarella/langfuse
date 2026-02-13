@@ -155,9 +155,9 @@ model Project {
   TraceMedia                TraceMedia[]
   Media                     Media[]
   ObservationMedia          ObservationMedia[]
-  LegacyTrace               LegacyPrismaTrace[]
-  LegacyObservation         LegacyPrismaObservation[]
-  LegacyScore               LegacyPrismaScore[]
+  PgTrace                   PgTrace[]
+  PgObservation             PgObservation[]
+  PgScore                   PgScore[]
   PromptDependency          PromptDependency[]
   LlmSchema                 LlmSchema[]
   LlmTool                   LlmTool[]
@@ -327,25 +327,26 @@ model TraceSession {
   @@map("trace_sessions")
 }
 
-model LegacyPrismaTrace {
-  id         String   @id @default(cuid())
-  externalId String?  @map("external_id")
-  timestamp  DateTime @default(now())
-  name       String?
-  userId     String?  @map("user_id")
-  metadata   Json?
-  release    String?
-  version    String?
-  projectId  String   @map("project_id")
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  public     Boolean  @default(false)
-  bookmarked Boolean  @default(false)
-  tags       String[] @default([])
-  input      Json?
-  output     Json?
-  sessionId  String?  @map("session_id")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
+model PgTrace {
+  id          String   @id @default(cuid())
+  externalId  String?  @map("external_id")
+  timestamp   DateTime @default(now())
+  name        String?
+  userId      String?  @map("user_id")
+  metadata    Json?
+  release     String?
+  version     String?
+  projectId   String   @map("project_id")
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  public      Boolean  @default(false)
+  bookmarked  Boolean  @default(false)
+  tags        String[] @default([])
+  input       Json?
+  output      Json?
+  sessionId   String?  @map("session_id")
+  environment String   @default("default")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@index([projectId, timestamp])
   @@index([sessionId])
@@ -355,45 +356,53 @@ model LegacyPrismaTrace {
   @@index(timestamp)
   @@index(createdAt)
   @@index([tags(ops: ArrayOps)], type: Gin)
+  @@index([projectId, environment])
   @@map("traces")
 }
 
-model LegacyPrismaObservation {
-  id                   String                       @id @default(cuid())
-  traceId              String?                      @map("trace_id")
-  projectId            String                       @map("project_id")
-  project              Project                      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  type                 LegacyPrismaObservationType
-  startTime            DateTime                     @default(now()) @map("start_time")
-  endTime              DateTime?                    @map("end_time")
+model PgObservation {
+  id                   String           @id @default(cuid())
+  traceId              String?          @map("trace_id")
+  projectId            String           @map("project_id")
+  project              Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type                 PgObservationType
+  startTime            DateTime         @default(now()) @map("start_time")
+  endTime              DateTime?        @map("end_time")
   name                 String?
   metadata             Json?
-  parentObservationId  String?                      @map("parent_observation_id")
-  level                LegacyPrismaObservationLevel @default(DEFAULT)
-  statusMessage        String?                      @map("status_message")
+  parentObservationId  String?          @map("parent_observation_id")
+  level                PgObservationLevel @default(DEFAULT)
+  statusMessage        String?          @map("status_message")
   version              String?
-  createdAt            DateTime                     @default(now()) @map("created_at")
-  updatedAt            DateTime                     @default(now()) @updatedAt @map("updated_at")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @default(now()) @updatedAt @map("updated_at")
   model                String? // user-provided model attribute
-  internalModel        String?                      @map("internal_model") // matched model.name that is matched at ingestion time, to be deprecated
-  internalModelId      String?                      @map("internal_model_id") // matched model.id that is matched at ingestion time
+  internalModel        String?          @map("internal_model") // matched model.name that is matched at ingestion time, to be deprecated
+  internalModelId      String?          @map("internal_model_id") // matched model.id that is matched at ingestion time
   modelParameters      Json?
   input                Json?
   output               Json?
-  promptTokens         Int                          @default(0) @map("prompt_tokens")
-  completionTokens     Int                          @default(0) @map("completion_tokens")
-  totalTokens          Int                          @default(0) @map("total_tokens")
+  promptTokens         Int              @default(0) @map("prompt_tokens")
+  completionTokens     Int              @default(0) @map("completion_tokens")
+  totalTokens          Int              @default(0) @map("total_tokens")
   unit                 String?
   // User provided cost at ingestion
-  inputCost            Decimal?                     @map("input_cost")
-  outputCost           Decimal?                     @map("output_cost")
-  totalCost            Decimal?                     @map("total_cost")
+  inputCost            Decimal?         @map("input_cost")
+  outputCost           Decimal?         @map("output_cost")
+  totalCost            Decimal?         @map("total_cost")
   // Calculated cost
-  calculatedInputCost  Decimal?                     @map("calculated_input_cost")
-  calculatedOutputCost Decimal?                     @map("calculated_output_cost")
-  calculatedTotalCost  Decimal?                     @map("calculated_total_cost")
-  completionStartTime  DateTime?                    @map("completion_start_time")
-  promptId             String?                      @map("prompt_id") // no fk constraint, prompt can be deleted
+  calculatedInputCost  Decimal?         @map("calculated_input_cost")
+  calculatedOutputCost Decimal?         @map("calculated_output_cost")
+  calculatedTotalCost  Decimal?         @map("calculated_total_cost")
+  completionStartTime  DateTime?        @map("completion_start_time")
+  promptId             String?          @map("prompt_id") // no fk constraint, prompt can be deleted
+  environment          String           @default("default")
+  promptName           String?          @map("prompt_name")
+  promptVersion        Int?             @map("prompt_version")
+  usageDetails         Json?            @map("usage_details") @db.JsonB
+  costDetails          Json?            @map("cost_details") @db.JsonB
+  providedUsageDetails Json?            @map("provided_usage_details") @db.JsonB
+  providedCostDetails  Json?            @map("provided_cost_details") @db.JsonB
 
   @@unique([id, projectId])
   @@index([projectId, internalModel, startTime, unit])
@@ -407,10 +416,11 @@ model LegacyPrismaObservation {
   @@index([projectId, promptId])
   @@index(promptId)
   @@index([projectId, startTime, type])
+  @@index([projectId, environment])
   @@map("observations")
 }
 
-enum LegacyPrismaObservationType {
+enum PgObservationType {
   SPAN
   EVENT
   GENERATION
@@ -425,7 +435,7 @@ enum LegacyPrismaObservationType {
   @@map("ObservationType")
 }
 
-enum LegacyPrismaObservationLevel {
+enum PgObservationLevel {
   DEBUG
   DEFAULT
   WARNING
@@ -434,25 +444,27 @@ enum LegacyPrismaObservationLevel {
   @@map("ObservationLevel")
 }
 
-model LegacyPrismaScore {
-  id            String                  @id @default(cuid())
-  timestamp     DateTime                @default(now())
-  projectId     String                  @map("project_id")
-  project       Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+model PgScore {
+  id            String              @id @default(cuid())
+  timestamp     DateTime            @default(now())
+  projectId     String              @map("project_id")
+  project       Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name          String
   value         Float? // always defined if data type is NUMERIC or BOOLEAN, optional for CATEGORICAL
-  source        LegacyPrismaScoreSource
-  authorUserId  String?                 @map("author_user_id")
+  source        PgScoreSource
+  authorUserId  String?             @map("author_user_id")
   comment       String?
-  traceId       String                  @map("trace_id")
-  observationId String?                 @map("observation_id")
-  configId      String?                 @map("config_id")
-  stringValue   String?                 @map("string_value") // always defined if data type is CATEGORICAL or BOOLEAN, null for NUMERIC
-  queueId       String?                 @map("queue_id")
-  createdAt     DateTime                @default(now()) @map("created_at")
-  updatedAt     DateTime                @default(now()) @updatedAt @map("updated_at")
-  dataType      ScoreConfigDataType     @default(NUMERIC) @map("data_type")
-  scoreConfig   ScoreConfig?            @relation(fields: [configId], references: [id], onDelete: SetNull)
+  traceId       String              @map("trace_id")
+  observationId String?             @map("observation_id")
+  configId      String?             @map("config_id")
+  stringValue   String?             @map("string_value") // always defined if data type is CATEGORICAL or BOOLEAN, null for NUMERIC
+  queueId       String?             @map("queue_id")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at")
+  dataType      ScoreConfigDataType @default(NUMERIC) @map("data_type")
+  scoreConfig   ScoreConfig?        @relation(fields: [configId], references: [id], onDelete: SetNull)
+  environment   String              @default("default")
+  metadata      Json?               @db.JsonB
 
   @@unique([id, projectId]) // used for upserts via prisma
   @@index(timestamp)
@@ -464,10 +476,11 @@ model LegacyPrismaScore {
   @@index([observationId], type: Hash)
   @@index([source])
   @@index([createdAt])
+  @@index([projectId, environment])
   @@map("scores")
 }
 
-enum LegacyPrismaScoreSource {
+enum PgScoreSource {
   ANNOTATION
   API
   EVAL
@@ -488,7 +501,7 @@ model ScoreConfig {
   maxValue    Float?              @map("max_value")
   categories  Json?               @map("categories")
   description String?
-  legacyScore LegacyPrismaScore[]
+  scores PgScore[]
 
   @@unique([id, projectId]) // used for upserts via prisma
   @@index([dataType])

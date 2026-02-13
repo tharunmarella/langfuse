@@ -1,5 +1,4 @@
 import {
-  clickhouseClient,
   ClickhouseClientType,
   BlobStorageFileLogInsertType,
   getCurrentSpan,
@@ -14,6 +13,7 @@ import {
   DatasetRunItemRecordInsertType,
   EventRecordInsertType,
 } from "@langfuse/shared/src/server";
+import { prisma } from "@langfuse/shared/src/db";
 
 import { env } from "../../env";
 import { logger } from "@langfuse/shared/src/server";
@@ -465,34 +465,169 @@ export class ClickhouseWriter {
   }): Promise<void> {
     const startTime = Date.now();
 
-    await (ClickhouseWriter.client ?? clickhouseClient())
-      .insert({
-        table: params.table,
-        format: "JSONEachRow",
-        values: params.records,
-        clickhouse_settings: {
-          log_comment: JSON.stringify({
-            feature: "ingestion",
-            type: params.table,
-            operation_name: "writeToClickhouse",
-            projectId:
-              params.records.length > 0
-                ? params.records[0].project_id
-                : undefined,
-          }),
-        },
-      })
-      .catch((err) => {
-        logger.error(`ClickhouseWriter.writeToClickhouse ${err}`);
-
+    // PostgreSQL-only mode: write records using Prisma upserts
+    for (const record of params.records) {
+      try {
+        await this.writeRecordToPostgres(params.table, record as any);
+      } catch (err) {
+        logger.error(`PostgresWriter.writeRecord ${params.table}: ${err}`);
         throw err;
-      });
+      }
+    }
 
-    logger.debug(
-      `ClickhouseWriter.writeToClickhouse: ${Date.now() - startTime} ms`,
-    );
+    logger.debug(`PostgresWriter.write: ${Date.now() - startTime} ms`);
 
     recordGauge("ingestion_clickhouse_insert", params.records.length);
+  }
+
+  private async writeRecordToPostgres(
+    table: TableName,
+    record: any,
+  ): Promise<void> {
+    switch (table) {
+      case TableName.Traces: {
+        const r = record as TraceRecordInsertType;
+        await prisma.pgTrace.upsert({
+          where: { id: r.id },
+          create: {
+            id: r.id,
+            name: r.name ?? null,
+            userId: r.user_id ?? null,
+            metadata: (r.metadata as any) ?? undefined,
+            release: r.release ?? null,
+            version: r.version ?? null,
+            projectId: r.project_id,
+            public: r.public ?? false,
+            bookmarked: r.bookmarked ?? false,
+            tags: r.tags ?? [],
+            input: r.input ? safeJsonParse(r.input) : undefined,
+            output: r.output ? safeJsonParse(r.output) : undefined,
+            sessionId: r.session_id ?? null,
+            environment: r.environment ?? "default",
+            timestamp: r.timestamp ? new Date(r.timestamp) : new Date(),
+          },
+          update: {
+            name: r.name ?? undefined,
+            userId: r.user_id ?? undefined,
+            metadata: (r.metadata as any) ?? undefined,
+            release: r.release ?? undefined,
+            version: r.version ?? undefined,
+            public: r.public ?? undefined,
+            bookmarked: r.bookmarked ?? undefined,
+            tags: r.tags ?? undefined,
+            input: r.input ? safeJsonParse(r.input) : undefined,
+            output: r.output ? safeJsonParse(r.output) : undefined,
+            sessionId: r.session_id ?? undefined,
+            environment: r.environment ?? undefined,
+          },
+        });
+        break;
+      }
+      case TableName.Observations: {
+        const r = record as ObservationRecordInsertType;
+        await prisma.pgObservation.upsert({
+          where: { id: r.id },
+          create: {
+            id: r.id,
+            traceId: r.trace_id ?? null,
+            projectId: r.project_id,
+            type: (r.type as any) ?? "SPAN",
+            startTime: r.start_time ? new Date(r.start_time) : new Date(),
+            endTime: r.end_time ? new Date(r.end_time) : null,
+            name: r.name ?? null,
+            metadata: (r.metadata as any) ?? undefined,
+            parentObservationId: r.parent_observation_id ?? null,
+            level: (r.level as any) ?? "DEFAULT",
+            statusMessage: r.status_message ?? null,
+            version: r.version ?? null,
+            model: r.provided_model_name ?? null,
+            internalModelId: r.internal_model_id ?? null,
+            modelParameters: r.model_parameters
+              ? safeJsonParse(r.model_parameters)
+              : undefined,
+            input: r.input ? safeJsonParse(r.input) : undefined,
+            output: r.output ? safeJsonParse(r.output) : undefined,
+            completionStartTime: r.completion_start_time
+              ? new Date(r.completion_start_time)
+              : null,
+            promptId: r.prompt_id ?? null,
+            environment: r.environment ?? "default",
+            promptName: r.prompt_name ?? null,
+            promptVersion: r.prompt_version ?? null,
+            usageDetails: (r.usage_details as any) ?? undefined,
+            costDetails: (r.cost_details as any) ?? undefined,
+            providedUsageDetails:
+              (r.provided_usage_details as any) ?? undefined,
+            providedCostDetails: (r.provided_cost_details as any) ?? undefined,
+          },
+          update: {
+            traceId: r.trace_id ?? undefined,
+            name: r.name ?? undefined,
+            metadata: (r.metadata as any) ?? undefined,
+            level: (r.level as any) ?? undefined,
+            statusMessage: r.status_message ?? undefined,
+            version: r.version ?? undefined,
+            model: r.provided_model_name ?? undefined,
+            internalModelId: r.internal_model_id ?? undefined,
+            input: r.input ? safeJsonParse(r.input) : undefined,
+            output: r.output ? safeJsonParse(r.output) : undefined,
+            environment: r.environment ?? undefined,
+            usageDetails: (r.usage_details as any) ?? undefined,
+            costDetails: (r.cost_details as any) ?? undefined,
+            providedUsageDetails:
+              (r.provided_usage_details as any) ?? undefined,
+            providedCostDetails: (r.provided_cost_details as any) ?? undefined,
+          },
+        });
+        break;
+      }
+      case TableName.Scores: {
+        const r = record as ScoreRecordInsertType;
+        await prisma.pgScore.upsert({
+          where: {
+            id_projectId: { id: r.id, projectId: r.project_id },
+          },
+          create: {
+            id: r.id,
+            projectId: r.project_id,
+            traceId: r.trace_id ?? "",
+            observationId: r.observation_id ?? null,
+            name: r.name ?? "",
+            value: r.value ?? null,
+            source: (r.source as any) ?? "API",
+            comment: r.comment ?? null,
+            authorUserId: r.author_user_id ?? null,
+            configId: r.config_id ?? null,
+            dataType: (r.data_type as any) ?? "NUMERIC",
+            stringValue: r.string_value ?? null,
+            queueId: r.queue_id ?? null,
+            environment: r.environment ?? "default",
+            metadata: (r.metadata as any) ?? undefined,
+            timestamp: r.timestamp ? new Date(r.timestamp) : new Date(),
+          },
+          update: {
+            name: r.name ?? undefined,
+            value: r.value ?? undefined,
+            source: (r.source as any) ?? undefined,
+            comment: r.comment ?? undefined,
+            authorUserId: r.author_user_id ?? undefined,
+            dataType: (r.data_type as any) ?? undefined,
+            stringValue: r.string_value ?? undefined,
+            environment: r.environment ?? undefined,
+            metadata: (r.metadata as any) ?? undefined,
+          },
+        });
+        break;
+      }
+      // Skip ClickHouse-only tables in PostgreSQL mode
+      case TableName.TracesNull:
+      case TableName.ObservationsBatchStaging:
+      case TableName.BlobStorageFileLog:
+      case TableName.DatasetRunItems:
+      case TableName.Events:
+        // These are ClickHouse-specific tables; no-op in PostgreSQL-only mode
+        break;
+    }
   }
 }
 
@@ -534,3 +669,11 @@ type ClickhouseWriterQueueItem<T extends TableName> = {
   attempts: number;
   data: RecordInsertType<T>;
 };
+
+function safeJsonParse(value: string): any {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}

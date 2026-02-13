@@ -49,13 +49,13 @@ const EnvSchema = z.object({
   LANGFUSE_CACHE_MODEL_MATCH_TTL_SECONDS: z.coerce.number().default(86400), // 24 hours
   LANGFUSE_CACHE_PROMPT_ENABLED: z.enum(["true", "false"]).default("true"),
   LANGFUSE_CACHE_PROMPT_TTL_SECONDS: z.coerce.number().default(300), // 5 minutes
-  CLICKHOUSE_URL: z.string().url(),
+  CLICKHOUSE_URL: z.string().url().optional(),
   CLICKHOUSE_READ_ONLY_URL: z.string().url().optional(),
   CLICKHOUSE_EVENTS_READ_ONLY_URL: z.string().url().optional(),
   CLICKHOUSE_CLUSTER_NAME: z.string().default("default"),
   CLICKHOUSE_DB: z.string().default("default"),
-  CLICKHOUSE_USER: z.string(),
-  CLICKHOUSE_PASSWORD: z.string(),
+  CLICKHOUSE_USER: z.string().optional().default(""),
+  CLICKHOUSE_PASSWORD: z.string().optional().default(""),
   CLICKHOUSE_KEEP_ALIVE_IDLE_SOCKET_TTL: z.coerce.number().int().default(9000),
   CLICKHOUSE_MAX_OPEN_CONNECTIONS: z.coerce.number().int().default(25),
   // Optional to allow for server-setting fallbacks

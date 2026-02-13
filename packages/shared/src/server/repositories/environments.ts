@@ -1,5 +1,8 @@
-import { AGGREGATABLE_SCORE_TYPES } from "../../domain/scores";
-import { queryClickhouse } from "./clickhouse";
+/**
+ * Environments repository - PostgreSQL-only implementation.
+ */
+
+import { prisma } from "../../db";
 
 export type EnvironmentFilterProps = {
   projectId: string;
@@ -9,50 +12,30 @@ export type EnvironmentFilterProps = {
 export const getEnvironmentsForProject = async (
   props: EnvironmentFilterProps,
 ): Promise<{ environment: string }[]> => {
-  const { projectId, fromTimestamp } = props;
+  const { projectId } = props;
 
-  const query = `
-    (
-      SELECT distinct environment
-      FROM traces
-      WHERE project_id = {projectId: String}
-      ${fromTimestamp ? "AND timestamp >= {fromTimestamp: DateTime64(3)}" : ""}
-    ) UNION ALL (
-      SELECT distinct environment
-      FROM observations
-      WHERE project_id = {projectId: String}
-      ${fromTimestamp ? "AND start_time >= {fromTimestamp: DateTime64(3)}" : ""}
-    ) UNION ALL (
-      SELECT distinct environment
-      FROM scores
-      WHERE project_id = {projectId: String}
-      AND data_type IN ({dataTypes: Array(String)})
-      ${fromTimestamp ? "AND timestamp >= {fromTimestamp: DateTime64(3)}" : ""}
-    )
-  `;
-
-  const results = await queryClickhouse<{
-    environment: string;
-  }>({
-    query,
-    params: {
-      projectId,
-      fromTimestamp,
-      dataTypes: AGGREGATABLE_SCORE_TYPES,
-    },
-    tags: {
-      feature: "tracing",
-      type: "environment",
-      kind: "byId",
-      projectId,
-    },
+  const traceEnvs = await prisma.pgTrace.findMany({
+    where: { projectId },
+    distinct: ["environment"],
+    select: { environment: true },
   });
-  // Always add default environment to list
-  results.push({ environment: "default" });
 
-  return Array.from(new Set(results.map((e) => e.environment))).map(
-    (environment) => ({
-      environment,
-    }),
-  );
+  const obsEnvs = await prisma.pgObservation.findMany({
+    where: { projectId },
+    distinct: ["environment"],
+    select: { environment: true },
+  });
+
+  const scoreEnvs = await prisma.pgScore.findMany({
+    where: { projectId },
+    distinct: ["environment"],
+    select: { environment: true },
+  });
+
+  const allEnvs = new Set<string>(["default"]);
+  for (const e of traceEnvs) allEnvs.add(e.environment);
+  for (const e of obsEnvs) allEnvs.add(e.environment);
+  for (const e of scoreEnvs) allEnvs.add(e.environment);
+
+  return Array.from(allEnvs).map((environment) => ({ environment }));
 };

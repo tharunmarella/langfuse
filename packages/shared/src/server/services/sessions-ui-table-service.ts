@@ -1,18 +1,10 @@
-import { ClickHouseClientConfigOptions } from "@clickhouse/client";
+/**
+ * Sessions UI Table Service - PostgreSQL-only implementation.
+ */
+
 import { OrderByState } from "../../interfaces/orderBy";
-import { sessionCols } from "../tableMappings/mapSessionTable";
 import { FilterState } from "../../types";
-import { convertDateToClickhouseDateTime } from "../clickhouse/client";
-import { measureAndReturn } from "../clickhouse/measureAndReturn";
-import { DateTimeFilter, FilterList, orderByToClickhouseSql } from "../queries";
-import {
-  getProjectIdDefaultFilter,
-  createFilterFromFilterState,
-} from "../queries/clickhouse-sql/factory";
-import {
-  TRACE_TO_OBSERVATIONS_INTERVAL,
-  queryClickhouse,
-} from "../repositories";
+import { prisma } from "../../db";
 
 export type SessionDataReturnType = {
   session_id: string;
@@ -47,17 +39,12 @@ export const getSessionsTableCount = async (props: {
   limit?: number;
   page?: number;
 }) => {
-  const rows = await getSessionsTableGeneric<{ count: string }>({
-    select: "count",
-    projectId: props.projectId,
-    filter: props.filter,
-    orderBy: props.orderBy,
-    limit: props.limit,
-    page: props.page,
-    tags: { kind: "count" },
+  const result = await prisma.pgTrace.groupBy({
+    by: ["sessionId"],
+    where: { projectId: props.projectId, sessionId: { not: null } },
+    _count: { id: true },
   });
-
-  return rows.length > 0 ? Number(rows[0].count) : 0;
+  return result.length;
 };
 
 export const getSessionsTable = async (props: {
@@ -66,20 +53,41 @@ export const getSessionsTable = async (props: {
   orderBy?: OrderByState;
   limit?: number;
   page?: number;
-}) => {
-  const rows = await getSessionsTableGeneric<SessionDataReturnType>({
-    select: "rows",
-    projectId: props.projectId,
-    filter: props.filter,
-    orderBy: props.orderBy,
-    limit: props.limit,
-    page: props.page,
-    tags: { kind: "list" },
-  });
+}): Promise<SessionDataReturnType[]> => {
+  const limit = props.limit ?? 50;
+  const page = props.page ?? 0;
 
-  return rows.map((row) => ({
-    ...row,
-    trace_count: Number(row.trace_count),
+  const sessions = await prisma.$queryRawUnsafe<any[]>(
+    `
+    SELECT
+      session_id,
+      MAX(timestamp) as max_timestamp,
+      MIN(timestamp) as min_timestamp,
+      array_agg(DISTINCT id) as trace_ids,
+      array_agg(DISTINCT user_id) FILTER (WHERE user_id IS NOT NULL) as user_ids,
+      COUNT(*)::int as trace_count,
+      array_agg(DISTINCT unnest_tags) as trace_tags
+    FROM traces
+    LEFT JOIN LATERAL unnest(tags) AS unnest_tags ON true
+    WHERE project_id = $1
+      AND session_id IS NOT NULL
+    GROUP BY session_id
+    ORDER BY max_timestamp DESC
+    LIMIT $2 OFFSET $3
+  `,
+    props.projectId,
+    limit,
+    page * limit,
+  );
+
+  return sessions.map((s) => ({
+    session_id: s.session_id,
+    max_timestamp: s.max_timestamp?.toISOString() ?? "",
+    min_timestamp: s.min_timestamp?.toISOString() ?? "",
+    trace_ids: s.trace_ids ?? [],
+    user_ids: (s.user_ids ?? []).filter(Boolean),
+    trace_count: Number(s.trace_count),
+    trace_tags: (s.trace_tags ?? []).filter(Boolean),
   }));
 };
 
@@ -89,325 +97,71 @@ export const getSessionsWithMetrics = async (props: {
   orderBy?: OrderByState;
   limit?: number;
   page?: number;
-  clickhouseConfigs?: ClickHouseClientConfigOptions | undefined;
-}) => {
-  const rows = await getSessionsTableGeneric<SessionWithMetricsReturnType>({
-    select: "metrics",
-    projectId: props.projectId,
-    filter: props.filter,
-    orderBy: props.orderBy,
-    limit: props.limit,
-    page: props.page,
-    clickhouseConfigs: props.clickhouseConfigs,
-    tags: { kind: "analytic" },
-  });
+  clickhouseConfigs?: any;
+}): Promise<SessionWithMetricsReturnType[]> => {
+  const sessions = await getSessionsTable(props);
 
-  return rows.map((row) => ({
-    ...row,
-    trace_count: Number(row.trace_count),
-    total_observations: Number(row.total_observations),
-  }));
+  // Fetch metrics for each session
+  const results: SessionWithMetricsReturnType[] = [];
+  for (const session of sessions) {
+    const observations = await prisma.pgObservation.aggregate({
+      where: {
+        projectId: props.projectId,
+        traceId: { in: session.trace_ids },
+      },
+      _count: { id: true },
+      _sum: {
+        calculatedTotalCost: true,
+        calculatedInputCost: true,
+        calculatedOutputCost: true,
+        promptTokens: true,
+        completionTokens: true,
+        totalTokens: true,
+      },
+    });
+
+    const duration =
+      session.max_timestamp && session.min_timestamp
+        ? (new Date(session.max_timestamp).getTime() -
+            new Date(session.min_timestamp).getTime()) /
+          1000
+        : 0;
+
+    results.push({
+      ...session,
+      total_observations: observations._count.id,
+      duration,
+      session_usage_details: {
+        input: observations._sum.promptTokens ?? 0,
+        output: observations._sum.completionTokens ?? 0,
+        total: observations._sum.totalTokens ?? 0,
+      },
+      session_cost_details: {},
+      session_input_cost: (
+        observations._sum.calculatedInputCost ?? 0
+      ).toString(),
+      session_output_cost: (
+        observations._sum.calculatedOutputCost ?? 0
+      ).toString(),
+      session_total_cost: (
+        observations._sum.calculatedTotalCost ?? 0
+      ).toString(),
+      session_input_usage: (observations._sum.promptTokens ?? 0).toString(),
+      session_output_usage: (
+        observations._sum.completionTokens ?? 0
+      ).toString(),
+      session_total_usage: (observations._sum.totalTokens ?? 0).toString(),
+    });
+  }
+
+  return results;
 };
 
 export type FetchSessionsTableProps = {
-  select: "count" | "rows" | "metrics";
   projectId: string;
   filter: FilterState;
   searchQuery?: string;
   orderBy?: OrderByState;
   limit?: number;
   page?: number;
-  tags?: Record<string, string>;
-  clickhouseConfigs?: ClickHouseClientConfigOptions | undefined;
-};
-
-const getSessionsTableGeneric = async <T>(props: FetchSessionsTableProps) => {
-  const { select, projectId, filter, orderBy, limit, page, clickhouseConfigs } =
-    props;
-
-  let sqlSelect: string;
-  switch (select) {
-    case "count":
-      sqlSelect = "count(session_id) as count";
-      break;
-    case "rows":
-      sqlSelect = `
-          session_id,
-          max_timestamp,
-          min_timestamp,
-          trace_ids,
-          user_ids,
-          trace_count,
-          trace_tags,
-          trace_environment`;
-      break;
-    case "metrics":
-      sqlSelect = `
-        session_id,
-        max_timestamp,
-        min_timestamp,
-        trace_ids,
-        user_ids,
-        trace_count,
-        trace_tags,
-        trace_environment,
-        total_observations,
-        duration,
-        session_usage_details,
-        session_cost_details,
-        session_input_cost,
-        session_output_cost,
-        session_total_cost,
-        session_input_usage,
-        session_output_usage,
-        session_total_usage,
-        scores_avg,
-        score_categories`;
-      break;
-    default: {
-      const exhaustiveCheckDefault: never = select;
-      throw new Error(`Unknown select type: ${exhaustiveCheckDefault}`);
-    }
-  }
-
-  const { tracesFilter, scoresFilter } = getProjectIdDefaultFilter(projectId, {
-    tracesPrefix: "s",
-  });
-
-  tracesFilter.push(...createFilterFromFilterState(filter, sessionCols));
-
-  const tracesFilterRes = tracesFilter
-    .filter((f) => f.field !== "environment")
-    .apply();
-  const scoresFilterRes = scoresFilter.apply();
-
-  const traceTimestampFilter: DateTimeFilter | undefined = tracesFilter.find(
-    (f) =>
-      f.field === "min_timestamp" &&
-      (f.operator === ">=" || f.operator === ">"),
-  ) as DateTimeFilter | undefined;
-
-  const filters = [];
-  if (traceTimestampFilter) {
-    filters.push(
-      new DateTimeFilter({
-        clickhouseTable: "traces",
-        field: "timestamp",
-        operator: traceTimestampFilter.operator,
-        value: traceTimestampFilter.value,
-      }),
-    );
-  }
-
-  tracesFilter
-    .filter(
-      (f) =>
-        f.field === "bookmarked" ||
-        f.field === "session_id" ||
-        f.field === "environment",
-    )
-    .forEach((f) => filters.push(f));
-
-  const singleTraceFilter =
-    filters.length > 0 ? new FilterList(filters).apply() : undefined;
-
-  const requiresScoresJoin =
-    tracesFilter.find((f) => f.clickhouseTable === "scores") !== undefined ||
-    sessionCols.find(
-      (c) =>
-        c.uiTableName === orderBy?.column || c.uiTableId === orderBy?.column,
-    )?.clickhouseTableName === "scores";
-
-  const hasMetricsFilter =
-    tracesFilter.find((f) =>
-      [
-        "session_total_cost",
-        "session_input_cost",
-        "session_output_cost",
-        "duration",
-        "session_total_usage",
-        "session_output_usage",
-        "session_input_usage",
-        "scores_avg",
-        "score_categories",
-      ].includes(f.field),
-    ) ||
-    (orderBy &&
-      [
-        "totalCost",
-        "inputCost",
-        "outputCost",
-        "sessionDuration",
-        "totalTokens",
-        "outputTokens",
-        "inputTokens",
-        "usage",
-      ].includes(orderBy?.column));
-
-  const selectMetrics = select === "metrics" || hasMetricsFilter;
-
-  const scoresCte = `scores_agg AS (
-    SELECT
-      project_id,
-      session_id AS score_session_id,
-      -- For numeric scores, use tuples of (name, avg_value)
-      groupArrayIf(
-        tuple(name, avg_value),
-        data_type IN ('NUMERIC', 'BOOLEAN')
-      ) AS scores_avg,
-      -- For categorical scores, use name:value format for improved query performance
-      groupArrayIf(
-        concat(name, ':', string_value),
-        data_type = 'CATEGORICAL' AND notEmpty(string_value)
-      ) AS score_categories
-    FROM (
-      SELECT
-        project_id,
-        session_id,
-        name,
-        data_type,
-        string_value,
-        avg(value) avg_value
-      FROM scores s FINAL
-      WHERE
-        project_id = {projectId: String}
-        ${scoresFilterRes ? `AND ${scoresFilterRes.query}` : ""}
-      GROUP BY
-        project_id,
-        session_id,
-        name,
-        data_type,
-        string_value
-      ) tmp
-    GROUP BY
-      project_id, session_id
-  )`;
-
-  // We use deduplicated traces and observations CTEs instead of final to be able to use Skip indices in Clickhouse.
-  const query = `
-        WITH ${select === "metrics" || requiresScoresJoin ? `${scoresCte},` : ""}
-        deduplicated_traces AS (
-          SELECT * EXCEPT input, output, metadata
-          FROM __TRACE_TABLE__ t
-          WHERE t.session_id IS NOT NULL
-            AND t.project_id = {projectId: String}
-            ${singleTraceFilter?.query ? ` AND ${singleTraceFilter.query}` : ""}
-            LIMIT 1 BY id, project_id
-        ),
-        deduplicated_observations AS (
-            SELECT *
-            FROM observations o
-            WHERE o.project_id = {projectId: String}
-            ${traceTimestampFilter ? `AND o.start_time >= {observationsStartTime: DateTime64(3)} - ${TRACE_TO_OBSERVATIONS_INTERVAL}` : ""}
-            AND o.trace_id IN (
-              SELECT id
-              FROM deduplicated_traces
-            )
-            ORDER BY event_ts DESC
-            LIMIT 1 BY id, project_id
-        ),
-        observations_agg AS (
-          SELECT o.trace_id,
-                count(*) as obs_count,
-                min(o.start_time) as min_start_time,
-                max(o.end_time) as max_end_time,
-                sumMap(usage_details) as sum_usage_details,
-                sumMap(cost_details) as sum_cost_details,
-                anyLast(project_id) as project_id
-          FROM deduplicated_observations o
-          WHERE o.project_id = {projectId: String}
-          ${traceTimestampFilter ? `AND o.start_time >= {observationsStartTime: DateTime64(3)} - ${TRACE_TO_OBSERVATIONS_INTERVAL}` : ""}
-          GROUP BY o.trace_id
-        ),
-        session_data AS (
-            SELECT
-                t.session_id as session_id,
-                anyLast(t.project_id) as project_id,
-                max(t.timestamp) as max_timestamp,
-                min(t.timestamp) as min_timestamp,
-                groupArray(t.id) AS trace_ids,
-                groupUniqArray(t.user_id) AS user_ids,
-                count(*) as trace_count,
-                groupUniqArrayArray(t.tags) as trace_tags,
-                anyLast(t.environment) as trace_environment
-                -- Aggregate observations data at session level
-                ${
-                  selectMetrics
-                    ? `,
-                      sum(o.obs_count) as total_observations,
-                      -- Use minIf, because ClickHouse fills 1970-01-01 on left joins. We assume that no
-                      -- LLM session started on that date so this behaviour should yield better results.
-                      date_diff('second', minIf(min_start_time, min_start_time > '1970-01-01'), max(max_end_time)) as duration,
-                      sumMap(o.sum_usage_details) as session_usage_details,
-                      sumMap(o.sum_cost_details) as session_cost_details,
-                      ${
-                        select === "metrics" || requiresScoresJoin
-                          ? `groupUniqArrayArray(s.scores_avg) as scores_avg,
-                      groupUniqArrayArray(s.score_categories) as score_categories,`
-                          : ""
-                      }
-                      arraySum(mapValues(mapFilter(x -> positionCaseInsensitive(x.1, 'input') > 0, sumMap(o.sum_cost_details)))) as session_input_cost,
-                      arraySum(mapValues(mapFilter(x -> positionCaseInsensitive(x.1, 'output') > 0, sumMap(o.sum_cost_details)))) as session_output_cost,
-                      sumMap(o.sum_cost_details)['total'] as session_total_cost,
-                      arraySum(mapValues(mapFilter(x -> positionCaseInsensitive(x.1, 'input') > 0, sumMap(o.sum_usage_details)))) as session_input_usage,
-                      arraySum(mapValues(mapFilter(x -> positionCaseInsensitive(x.1, 'output') > 0, sumMap(o.sum_usage_details)))) as session_output_usage,
-                      sumMap(o.sum_usage_details)['total'] as session_total_usage`
-                    : ""
-                }
-            FROM deduplicated_traces t
-            ${
-              selectMetrics
-                ? `LEFT JOIN observations_agg o
-                   ON t.id = o.trace_id AND t.project_id = o.project_id`
-                : ""
-            }
-           ${select === "metrics" || requiresScoresJoin ? `LEFT JOIN scores_agg s on s.project_id = t.project_id and t.session_id = s.score_session_id` : ""}
-            WHERE t.session_id IS NOT NULL
-                AND t.project_id = {projectId: String}
-                ${singleTraceFilter?.query ? ` AND ${singleTraceFilter.query}` : ""}
-            GROUP BY t.session_id
-        )
-        SELECT ${sqlSelect}
-        FROM session_data s
-        WHERE ${tracesFilterRes.query ? tracesFilterRes.query : ""}
-        ${orderByToClickhouseSql(orderBy ?? null, sessionCols)}
-        ${limit !== undefined && page !== undefined ? `LIMIT {limit: Int32} OFFSET {offset: Int32}` : ""}
-        `;
-
-  return measureAndReturn({
-    operationName: "getSessionsTableGeneric",
-    projectId,
-    input: {
-      params: {
-        projectId,
-        limit: limit,
-        offset: limit && page ? limit * page : 0,
-        ...tracesFilterRes.params,
-        ...singleTraceFilter?.params,
-        ...scoresFilterRes.params,
-        ...(traceTimestampFilter
-          ? {
-              observationsStartTime: convertDateToClickhouseDateTime(
-                traceTimestampFilter.value,
-              ),
-            }
-          : {}),
-      },
-      tags: {
-        ...(props.tags ?? {}),
-        feature: "tracing",
-        type: "sessions-table",
-        projectId,
-        operation_name: `getSessionsTableGeneric-${select}`,
-      },
-    },
-    fn: async (input) => {
-      return queryClickhouse<T>({
-        query: query.replace("__TRACE_TABLE__", "traces"),
-        params: input.params,
-        tags: input.tags,
-        clickhouseConfigs,
-      });
-    },
-  });
 };

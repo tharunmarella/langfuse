@@ -19,11 +19,10 @@ if [ -z "$DATABASE_URL" ]; then
     fi
 fi
 
-# Check if CLICKHOUSE_URL is not set
-if [ -z "$CLICKHOUSE_URL" ]; then
-    echo "Error: CLICKHOUSE_URL is not configured. Migrating from V2? Check out migration guide: https://langfuse.com/self-hosting/upgrade-guides/upgrade-v2-to-v3"
-    exit 1
-fi
+# ClickHouse is optional in PostgreSQL-only mode
+# if [ -z "$CLICKHOUSE_URL" ]; then
+#     echo "Warning: CLICKHOUSE_URL is not configured. Running in PostgreSQL-only mode."
+# fi
 
 # Set DIRECT_URL to the value of DATABASE_URL if it is not set, required for migrations
 if [ -z "$DIRECT_URL" ]; then
@@ -46,21 +45,13 @@ if [ $status -ne 0 ]; then
     exit $status
 fi
 
-# Execute the Clickhouse migration, except when disabled.
-if [ "$LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED" != "true" ]; then
-    # Apply Clickhouse migrations
-    cd ./packages/shared
-    sh ./clickhouse/scripts/up.sh
-    status=$?
-    cd ../../
-fi
-
-# If migration fails (returns non-zero exit status), exit script with that status
-if [ $status -ne 0 ]; then
-    echo "Applying clickhouse migrations failed. This is mostly caused by the database being unavailable."
-    echo "Exiting..."
-    exit $status
-fi
+# ClickHouse migrations disabled in PostgreSQL-only mode
+# if [ "$LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED" != "true" ]; then
+#     cd ./packages/shared
+#     sh ./clickhouse/scripts/up.sh
+#     status=$?
+#     cd ../../
+# fi
 
 # Run the command passed to the docker image on start
 exec "$@"
