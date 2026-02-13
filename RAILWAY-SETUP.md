@@ -17,9 +17,10 @@ Your Langfuse instance is now connected to Railway services:
    - Host: `interchange.proxy.rlwy.net:43974`
    - Status: ✅ Connected
 
-3. **S3 Storage** (Railway)
-   - Endpoint: `https://bucket-production-23cf.up.railway.app:443`
-   - Status: ⚠️ Needs access keys (see below)
+3. **MongoDB GridFS Storage** (Railway) - Replaces S3/MinIO
+   - Host: `metro.proxy.rlwy.net:30936`
+   - Database: `langfuse_storage`
+   - Status: ✅ Connected
 
 4. **Langfuse Web App**
    - Running: http://localhost:3000
@@ -35,38 +36,12 @@ DIRECT_URL="postgresql://postgres:nXTnBHWszltTuaCLEQolxMuZViBopdgK@caboose.proxy
 # Redis (Railway)
 REDIS_CONNECTION_STRING="redis://default:yfzvZovYNNBuzmlBTSOhEgZYfixGGFFo@interchange.proxy.rlwy.net:43974"
 
-# S3 Storage (Railway)
-LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT="https://bucket-production-23cf.up.railway.app:443"
-LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT="https://bucket-production-23cf.up.railway.app:443"
+# MongoDB GridFS Storage (Railway) - Replaces S3/MinIO
+LANGFUSE_USE_MONGODB_STORAGE="true"
+LANGFUSE_MONGODB_CONNECTION_STRING="mongodb://mongo:PKFTpimrAviafaVbDohJvdYYZncVbpMy@metro.proxy.rlwy.net:30936/langfuse_storage"
 ```
 
-## S3 Access Keys (Required)
-
-You need to add S3 access keys to your `.env`:
-
-```env
-# Get these from Railway S3 service dashboard
-LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID="your-access-key"
-LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY="your-secret-key"
-LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID="your-access-key"
-LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY="your-secret-key"
-```
-
-**Where to find them:**
-1. Go to Railway dashboard
-2. Click on your S3/Object Storage service
-3. Look for "Access Key ID" and "Secret Access Key"
-4. Copy and paste into `.env`
-
-## Alternative: Disable S3 (Optional)
-
-If you don't need S3 storage for events/media, you can disable it:
-
-```env
-# Disable S3 event storage (events will only be in PostgreSQL)
-LANGFUSE_S3_EVENT_UPLOAD_ENABLED="false"
-LANGFUSE_S3_MEDIA_UPLOAD_ENABLED="false"
-```
+**No S3 access keys needed!** MongoDB GridFS handles all file storage.
 
 ## Starting the Application
 
