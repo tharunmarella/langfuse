@@ -311,7 +311,7 @@ export const getDatabaseReadStreamPaginated = async ({
 
           const chunk = generations.map((generation) => {
             const filteredScores = scores.filter(
-              (s) => s.observationId === generation.id,
+              (s) => s.observation_id === generation.id,
             );
 
             const outputScores: Record<string, string[] | number[]> =
@@ -410,7 +410,7 @@ export const getDatabaseReadStreamPaginated = async ({
 
           const chunk = traces.map((t) => {
             const metric = metrics.find((m) => m.id === t.id);
-            const filteredScores = scores.filter((s) => s.traceId === t.id);
+            const filteredScores = scores.filter((s) => s.trace_id === t.id);
 
             const outputScores: Record<string, string[] | number[]> =
               prepareScoresForOutput(filteredScores);
@@ -594,21 +594,27 @@ export const getDatabaseReadStreamPaginated = async ({
 };
 
 export function prepareScoresForOutput(
-  scores: {
+  scores: Array<{
     name: string;
     stringValue?: string | null;
-    dataType: ScoreDataTypeType;
+    string_value?: string | null;
+    dataType?: ScoreDataTypeType;
+    data_type?: string;
     value: number;
-  }[],
+  }>,
 ): Record<string, string[] | number[]> {
   return scores.reduce(
     (acc, score) => {
+      // Handle both camelCase and snake_case properties
+      const dataType = (score.dataType || score.data_type) as ScoreDataTypeType;
+      const stringValue = score.stringValue || score.string_value;
+
       // If this score name already exists in acc, use its existing type
       const existingValues = acc[score.name];
       const newValue =
-        score.dataType === "NUMERIC" || score.dataType === "BOOLEAN"
+        dataType === "NUMERIC" || dataType === "BOOLEAN"
           ? score.value
-          : score.stringValue;
+          : stringValue;
       if (!isPresent(newValue)) return acc;
 
       if (!existingValues) {
