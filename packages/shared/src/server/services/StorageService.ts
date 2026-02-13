@@ -20,6 +20,7 @@ import { logger } from "../logger";
 import { env } from "../../env";
 import { backOff } from "exponential-backoff";
 import { ServiceUnavailableError } from "../../errors";
+import { MongoDBStorageService } from "./MongoDBStorageService";
 
 type UploadFile = {
   fileName: string;
@@ -113,10 +114,31 @@ export class StorageServiceFactory {
     forcePathStyle: boolean;
     useAzureBlob?: boolean;
     useGoogleCloudStorage?: boolean;
+    useMongoDB?: boolean;
+    mongoDBConnectionString?: string;
     googleCloudCredentials?: string;
     awsSse: string | undefined;
     awsSseKmsKeyId: string | undefined;
   }): StorageService {
+    // Check for MongoDB storage first
+    if (
+      params.useMongoDB !== undefined
+        ? params.useMongoDB
+        : env.LANGFUSE_USE_MONGODB_STORAGE === "true"
+    ) {
+      const connectionString =
+        params.mongoDBConnectionString ||
+        env.LANGFUSE_MONGODB_CONNECTION_STRING;
+      if (!connectionString) {
+        throw new Error(
+          "LANGFUSE_MONGODB_CONNECTION_STRING must be configured to use MongoDB storage",
+        );
+      }
+      return new MongoDBStorageService({
+        connectionString,
+        bucketName: params.bucketName,
+      });
+    }
     if (
       params.useAzureBlob !== undefined
         ? params.useAzureBlob

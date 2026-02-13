@@ -56,8 +56,28 @@ services:
     volumes:
       - langfuse_postgres_data:/var/lib/postgresql/data
 
+  mongodb:
+    image: docker.io/mongo:7
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongo
+      MONGO_INITDB_ROOT_PASSWORD: mongosecret
+      MONGO_INITDB_DATABASE: langfuse_storage
+    ports:
+      - 127.0.0.1:27018:27017
+    volumes:
+      - langfuse_mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
 volumes:
   langfuse_postgres_data:
+    driver: local
+  langfuse_mongodb_data:
     driver: local
   langfuse_minio_data:
     driver: local

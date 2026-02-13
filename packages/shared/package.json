@@ -104,6 +104,7 @@
     "langfuse-langchain": "3.38.6",
     "lodash": "^4.17.23",
     "lossless-json": "^4.1.1",
+    "mongodb": "^7.1.0",
     "next-auth": "^4.24.13",
     "nodemailer": "^7.0.11",
     "prisma-extension-kysely": "^3.0.0",

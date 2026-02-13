@@ -137,6 +137,9 @@ const EnvSchema = z.object({
     .enum(["true", "false"])
     .default("true"),
   LANGFUSE_USE_GOOGLE_CLOUD_STORAGE: z.enum(["true", "false"]).default("false"),
+  // MongoDB GridFS storage (alternative to S3)
+  LANGFUSE_USE_MONGODB_STORAGE: z.enum(["true", "false"]).default("false"),
+  LANGFUSE_MONGODB_CONNECTION_STRING: z.string().optional(),
   LANGFUSE_GOOGLE_CLOUD_STORAGE_CREDENTIALS: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
 
